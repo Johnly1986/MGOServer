@@ -64,8 +64,8 @@
 
   <div class="panel">
     <h2>白名单条目 <span class="badge" id="count"></span></h2>
-    <div class="hint">允许的客户端 IP 或 CIDR（如 <span class="mono">114.114.114.114</span>、<span class="mono">10.0.0.0/8</span>）。
-      本机（127.0.0.1 / ::1）恒在白名单、不可移除。修改仅本机可执行，保存即热生效并持久化。</div>
+    <div class="hint">允许访问的客户端 IP 或 CIDR 网段（如 <span class="mono">114.114.114.114</span>、<span class="mono">10.0.0.0/8</span>）。
+      本机始终允许、不可移除；仅可在服务器本机修改，保存后立即生效。</div>
     <ul id="list"></ul>
     <div class="row">
       <input id="entry" placeholder="输入 IP 或 CIDR，回车添加" spellcheck="false">
@@ -95,9 +95,9 @@ async function load() {
   $('#stateBadge').textContent = allowed ? `已授权（${ip}）` : `未授权（${ip}）`;
   $('#stateBadge').className = 'badge ' + (allowed ? 'ok' : 'err');
   if (!local) {
-    st.innerHTML = `当前 IP <b class="mono">${ip}</b> 不是本机（127.0.0.1/::1）——本页只读预览，白名单修改仅限本机执行。`;
+    st.innerHTML = `当前 IP <b class="mono">${ip}</b> 非服务器本机，本页只读。请在服务器本机打开此页修改。`;
   } else {
-    st.innerHTML = `本机访问 ✓ 可查看并修改白名单，保存后立即生效并写入 <span class="mono">workspace/whitelist.json</span>。`;
+    st.innerHTML = `本机访问 ✓ 可修改白名单，保存后立即生效。`;
   }
   if (!local) {
     $('#addBtn').disabled = $('#saveBtn').disabled = $('#resetBtn').disabled = true;
@@ -127,7 +127,7 @@ function addEntry() {
   const v = $('#entry').value.trim();
   if (!v) return;
   if (!/^[\w.:\/\[\]]+$/.test(v) || !/\d|:/.test(v)) {
-    show('格式无效：请输入 IP 或 CIDR（如 114.114.114.114 或 10.0.0.0/8）', 'err'); return;
+    show('格式无效，请输入 IP 或 CIDR 网段', 'err'); return;
   }
   if (!items.includes(v)) items.push(v);
   $('#entry').value = '';

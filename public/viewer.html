@@ -120,12 +120,12 @@
   </h3>
 
   <div id="layerWrap" class="sec" style="display:none">
-    <b>已加载图层（点击图层飞到目标）</b>
+    <b>已加载图层 · 点击定位</b>
     <ul id="layerList"></ul>
   </div>
 
   <div class="sec">
-    <b>底图影像（免费在线源，可关闭）</b>
+    <b>底图影像（免费在线源，可关）</b>
     <select id="basemap">
       <option value="esri_img">🛰 卫星影像 (Esri)</option>
       <option value="esri_street">🗺 街道地图 (Esri)</option>
@@ -138,14 +138,14 @@
   </div>
 
   <div class="sec">
-    <b>加载产物</b>
+    <b>加载任务成果</b>
     <div class="row">
       <select id="type">
-        <option value="3dtiles">3D Tiles (tileset.json)</option>
-        <option value="terrain">Quantized-Mesh 地形 (out 目录)</option>
-        <option value="imagery">TMS 影像 (out 目录)</option>
-        <option value="geojson">GeoJSON</option>
-        <option value="model">glTF 模型 (.glb)</option>
+        <option value="3dtiles">3D Tiles 三维瓦片</option>
+        <option value="terrain">地形切片（out 目录）</option>
+        <option value="imagery">影像瓦片（out 目录）</option>
+        <option value="geojson">GeoJSON 矢量</option>
+        <option value="model">glTF 模型（.glb）</option>
       </select>
     </div>
     <input id="asset" placeholder="/ws/&lt;jobId&gt;/out/tileset.json">
@@ -346,7 +346,7 @@ const LOADERS = {
       viewer.clock.currentTime = Cesium.JulianDate.fromDate(d);
     }
     syncLighting();
-    return { name: 'Quantized-Mesh 地形', obj: tp, fit: () => {
+    return { name: '地形', obj: tp, fit: () => {
       if (rect) viewer.camera.flyTo({ destination: rect, duration: 1.6 });
     } };
   },
@@ -359,7 +359,7 @@ const LOADERS = {
       ip = new Cesium.UrlTemplateImageryProvider({ url: url.replace(/\/$/, '') + '/{z}/{x}/{y}.png', tilingScheme: new Cesium.WebMercatorTilingScheme(), maximumLevel: 25 });
     }
     const l = viewer.imageryLayers.addImageryProvider(ip);
-    return { name: 'TMS 影像', obj: l, layer: true, fit: () => viewer.camera.flyTo({ destination: ip.rectangle }) };
+    return { name: '影像', obj: l, layer: true, fit: () => viewer.camera.flyTo({ destination: ip.rectangle }) };
   },
   'geojson': async (url) => {
     const ds = await Cesium.GeoJsonDataSource.load(url, { stroke: Cesium.Color.DEEPSKYBLUE, fill: Cesium.Color.DEEPSKYBLUE.withAlpha(0.3), strokeWidth: 3, clampToGround: true });
@@ -375,13 +375,13 @@ const LOADERS = {
       model: { uri: url, scale: 1 },
     });
     viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat, 1500), duration: 1 });
-    return { name: 'glTF 模型（预览）', obj: e, fit: () => viewer.flyTo(e) };
+    return { name: '模型预览', obj: e, fit: () => viewer.flyTo(e) };
   },
 };
 
 async function addLayer(type, url) {
   if (!url) return;
-  setStatus(`加载 ${type} …`);
+  setStatus('加载中…');
   try {
     const L = await LOADERS[type](url);
     L.url = url; L.type = type;
@@ -494,7 +494,7 @@ if (q.get('asset')) {
   // no asset → offer succeeded jobs
   fetch('/api/v1/jobs?status=succeeded&limit=20').then(r => r.json()).then(({ items }) => {
     if (!items?.length) return;
-    setStatus('提示：从任务列表点「查看」，或选择下方近期任务：');
+    setStatus('点击任务列表「查看」直接打开，或从下方选择近期成果：');
     const sel = document.createElement('select');
     sel.innerHTML = '<option value="">— 近期成功任务 —</option>' + items.map(j =>
       (j.artifacts || []).filter(a => a.viewer).map(a =>
