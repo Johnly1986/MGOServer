@@ -67,6 +67,9 @@
   textarea { font:12px/1.5 ui-monospace,Consolas,monospace; resize:vertical; min-height:84px; }
   #jsonBox { min-height:190px; }
   .hint { color:var(--dim2); font-size:11px; margin-top:3px; }
+  .hint:empty { display:none; }
+  .hint.bad { color:var(--err); }
+  input.bad { border-color:var(--err); box-shadow:0 0 0 3px rgba(239,91,104,.15); }
   ::placeholder { color:var(--dim2); opacity:.8; }
 
   /* toggle switch — styled directly on the native checkbox so programmatic
@@ -228,17 +231,17 @@
     <span class="ver">v0.1.0</span>
   </div>
   <div class="headRight">
-    <span class="pill" id="health"><i></i><span>探测服务中…</span></span>
-    <a class="linkBtn" id="wlLink" href="/whitelist.html" style="display:none" title="仅本机可管理">⚙ 白名单设置</a>
+    <span class="pill" id="health"><i></i><span>连接中…</span></span>
+    <a class="linkBtn" id="wlLink" href="/whitelist.html" style="display:none" title="仅服务器本机可修改">⚙ 白名单</a>
     <a class="linkBtn" href="/viewer.html" target="_blank">🗺 打开查看器</a>
   </div>
 </header>
 
 <main>
   <section class="panel">
-    <div class="panelHead"><h3>新建处理任务</h3><span class="tag">可选参数均为 CLI 高级项</span></div>
+    <div class="panelHead"><h3>新建处理任务</h3><span class="tag">高级参数均可留空</span></div>
 
-    <div class="hint" id="ipNote" style="margin-bottom:6px">检查客户端 IP 授权…</div>
+    <div class="hint" id="ipNote" style="margin-bottom:6px">检查 IP 授权…</div>
 
     <label>任务类型</label>
     <select id="type"></select>
@@ -262,7 +265,7 @@
   <section class="panel">
     <div class="panelHead">
       <h3>任务列表</h3>
-      <span class="tag" id="autoTag">每 5s 自动刷新</span>
+      <span class="tag" id="autoTag">5 秒自动刷新</span>
       <button id="refreshBtn" class="linkBtn" style="margin-left:auto">⟳ 刷新</button>
     </div>
     <div class="stats" id="stats"></div>
@@ -274,7 +277,7 @@
     </div>
     <div id="logPanel" hidden>
       <div class="logHead">
-        <h4>事件流 / 日志</h4>
+        <h4>任务日志</h4>
         <span class="badge s-running mono" id="logJob" style="font-family:ui-monospace,Consolas,monospace"></span>
         <span class="sp">
           <button id="copyLogBtn" title="复制日志">⧉ 复制</button>
@@ -329,9 +332,8 @@ const ipNote = () => {
   if (!n || !caps?.client) return;
   const { ip, allowed } = caps.client;
   n.innerHTML = allowed
-    ? `🟢 当前 IP <b>${esc(ip)}</b> 已在白名单，可提交任务（本机始终允许）`
-    : `🔴 当前 IP <b>${esc(ip)}</b> 不在白名单，提交将被拒绝 —— 请在本机执行
-       <span class="mono">POST /api/v1/whitelist</span> 添加，或从本机访问`;
+    ? `🟢 IP <b>${esc(ip)}</b> 已在白名单，可提交任务`
+    : `🔴 IP <b>${esc(ip)}</b> 不在白名单，提交将被拒绝 · 请在服务器本机打开「白名单」页添加`;
 };
 const showMsg = (text, kind) => {
   const m = $('#msg');
@@ -343,42 +345,52 @@ const showMsg = (text, kind) => {
 /* ================ field spec ================ */
 const ICONS = { tiles: '🏗', terrain: '⛰', image: '🛰', geojson: '📍', mesh: '🧊', osgb: '📷' };
 const DESC = {
-  tiles: 'FBX/OBJ 等模型 → 3D Tiles（b3dm + tileset.json），支持配准与投影',
-  terrain: 'GeoTIFF DEM → Cesium Quantized-Mesh 地形瓦片（条带式 TIF）',
-  image: 'DOM 正射影像 GeoTIFF → Web Mercator TMS 瓦片',
-  geojson: 'GeoJSON 坐标系转换（逐顶点投影）',
-  mesh: '模型简化 + 坐标投影 → glb/obj/fbx（Assimp 按扩展名导出）',
-  osgb: 'OSGB 倾斜摄影（DJI Terra / ContextCapture）→ 3D Tiles：浏览器选文件夹上传，或服务器本地路径直读',
+  tiles: '模型（FBX/OBJ 等）→ 3D Tiles（自动转地心坐标），可配准、简化',
+  terrain: 'DEM GeoTIFF → Cesium 地形瓦片',
+  image: '正射影像 GeoTIFF → TMS 瓦片',
+  geojson: 'GeoJSON → 经纬度坐标（EPSG:4326）',
+  mesh: '模型简化 / 格式转换（glb · obj · fbx）',
+  osgb: 'OSGB 倾斜摄影 → 3D Tiles，支持文件夹上传或本地路径',
+};
+const TYPE_CN = {
+  tiles: '模型转 3D Tiles', terrain: '地形切片', image: '影像切片',
+  geojson: '坐标转换', mesh: '模型简化', osgb: '倾斜摄影',
 };
 const F = (k, t, label, o = {}) => ({ k, t, label, ...o });
-const gProj = () => el2('投影 / CRS（可选）', [
-  F('proj.crs', 'text', '内联 CRS：EPSG:4547 | WKT | +proj=…', { span: true, ph: '如 EPSG:4547' }),
-  F('@prj', 'file', '或上传 .prj / .wkt 文件（优先于内联）', { accept: '.prj,.wkt,.proj', span: true }),
+/* select 值的中文注释（value 不变，仅显示更直观） */
+const OPT_CN = {
+  '7param': '七参数', multipos: '控制点拟合', anchor: '锚点',
+  original: '原始坐标', left: '左手坐标系',
+  ADD: '叠加细化', REPLACE: '替换细化',
+};
+const gProj = () => el2('投影 / CRS（目标自动：三维→地心，二维→经纬度）', [
+  F('proj.crs', 'text', '输入数据坐标系', { span: true, ph: 'EPSG:4547 / WKT / +proj=…', hint: '仅需声明输入数据的坐标系，输出坐标系由服务自动确定' }),
+  F('@prj', 'file', '或上传 .prj / .wkt 文件（优先生效）', { accept: '.prj,.wkt,.proj', span: true }),
 ]);
-const gOrigin = (label = '坐标原点 origin（投影坐标 E,N,H m）') => el2(label, [
+const gOrigin = (label = '坐标原点 Origin（E/N/H，米）') => el2(label, [
   F('origin', 'vec3', 'Origin', { subs: ['E/X (m)', 'N/Y (m)', 'H (m)'] }),
 ]);
 const gGeoref = ({ meshOffset = false } = {}) => {
-  const g = el2('地理配准 georef（可选）', [
-    F('georef.mode', 'select', '配准方式（--7p/--cps 可自动判定，可不选）', { opts: ['', '7param', 'multipos', 'anchor'] }),
-    F('georef.fitOrder', 'select', '拟合阶数（仅 multipos）', { opts: ['', '1', '2', '3'] }),
-    F('georef.autoCrs', 'bool', '自动探测源 CRS（仅 multipos）'),
-    F('georef.sevenParameter', 'seven', '七参数：平移 m | 旋转 角秒 | 尺度 ppm', { span: true }),
-    F('georef.controlPoints', 'area', '控制点 CSV 文本（表头 sx,sy,sz,tx,ty,tz）', { span: true }),
-    F('@cps', 'file', '或上传控制点 .csv 文件（优先于文本）', { accept: '.csv,.txt', span: true }),
+  const g = el2('地理配准', [
+    F('georef.mode', 'select', '配准方式（可自动判定）', { opts: ['', '7param', 'multipos', 'anchor'] }),
+    F('georef.fitOrder', 'select', '拟合阶数（仅控制点拟合）', { opts: ['', '1', '2', '3'] }),
+    F('georef.autoCrs', 'bool', '自动识别源坐标系'),
+    F('georef.sevenParameter', 'seven', '七参数（平移 m · 旋转 角秒 · 尺度 ppm）', { span: true }),
+    F('georef.controlPoints', 'area', '控制点 CSV 文本（源 → 目标）', { span: true }),
+    F('@cps', 'file', '或上传控制点 .csv（优先生效）', { accept: '.csv,.txt', span: true }),
   ]);
-  if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移 --offset', { subs: ['dE', 'dN', 'dH'] }));
+  if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移', { subs: ['dE', 'dN', 'dH'] }));
   return g;
 };
 const gSimplify = ({ local = false, errPh = '留空=不简化' } = {}) => {
-  const g = el2('简化 simplify（可选）', [
-    F('simplify.error', 'num', '误差 error', { ph: errPh }),
-    F('simplify.normalWeight', 'num', '法线权重 nweight', { ph: '留空=0.1' }),
-    F('simplify.threshold', 'num', '三角比阈值 threshold', { ph: '留空=0.1' }),
+  const g = el2('简化', [
+    F('simplify.error', 'num', '误差 error', { ph: errPh, min: 0 }),
+    F('simplify.normalWeight', 'num', '法线权重', { ph: '默认 0.1', min: 0, max: 1 }),
+    F('simplify.threshold', 'num', '三角面比例', { ph: '默认 0.1', min: 0 }),
     // mesh 的 -L 是带值布尔且 CLI 默认开 → 默认勾选；其余类型默认关
-    F('simplify.lockBorder', 'bool', '锁边防裂 lock-border', local ? { def: true } : {}),
+    F('simplify.lockBorder', 'bool', '锁边（防模型开裂）', local ? { def: true } : {}),
   ]);
-  if (local) g.fields.push(F('simplify.localError', 'bool', '绝对误差 local'));
+  if (local) g.fields.push(F('simplify.localError', 'bool', '按绝对误差简化'));
   return g;
 };
 function el2(name, fields) { return { name, fields }; }
@@ -387,48 +399,50 @@ const UI = {
   tiles: () => [gProj(), gOrigin(), gGeoref(), gSimplify()],
   terrain: () => ([
     { name: '地形参数', fields: [
-      F('maxLod', 'int', '最大 LOD 层级', { ph: '留空=自动' }),
-      F('samplesPerTile', 'int', '每瓦片采样（奇数）', { ph: '65' }),
-      F('normals', 'bool', 'OctVertexNormals 顶点法线', { def: true }),
+      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1 }),
+      F('samplesPerTile', 'int', '每瓦片采样数', { ph: '65', min: 2, max: 255, odd: true }),
+      F('normals', 'bool', '导出顶点法线', { def: true }),
     ]},
-    gOrigin('TIF 基点覆盖 --origin'), gProj(), gGeoref(),
+    gOrigin('TIF 基点覆盖 Origin'), gProj(), gGeoref(),
     gSimplify({ local: false, errPh: '留空=0.001（归一化）' }),
   ]),
   image: () => [gProj()],
-  geojson: () => ([{ name: '转换参数', fields: [
-    F('sourceCrs', 'text', '源 CRS', { ph: 'EPSG:4547 / ENU:lat,lon / WKT / +proj=' }),
-    F('targetCrs', 'text', '目标 CRS', { ph: 'EPSG:4326' }),
-    F('pretty', 'bool', '格式化输出'),
+  geojson: () => ([{ name: '转换参数（输出默认转经纬度）', fields: [
+    F('sourceCrs', 'text', '源坐标系', { span: true, ph: 'EPSG:4547 / ENU:lat,lon / WKT / +proj=' , hint: '留空则读文件内 crs 成员，均无时按经纬度处理；目标坐标系固定为 EPSG:4326，无需设置' }),
+    F('pretty', 'bool', '格式化输出 JSON'),
   ]}]),
   mesh: () => ([
     { name: '输出', fields: [
       F('outputFormat', 'select', '输出格式', { opts: ['glb', 'gltf', 'obj', 'fbx', 'ply'] }),
-      F('coordMode', 'select', '坐标系 -C', { opts: ['', 'original', 'left'] }),
-      F('reorder', 'bool', '重排优化 -r（meshopt 顶点重排）'),
-      F('rebuild', 'bool', '重建优化 -R（加载时重建场景）'),
-      F('@cfg', 'file', '或逐构件简化配置 CSV（-c，按构件正则匹配）', { accept: '.csv,.txt', span: true }),
+      F('coordMode', 'select', '输出坐标系', { opts: ['', 'original', 'left'] }),
+      F('reorder', 'bool', '顶点重排优化（减小体积）'),
+      F('rebuild', 'bool', '加载时重建场景'),
+      F('@cfg', 'file', '或上传逐构件简化配置 CSV（按名称匹配）', { accept: '.csv,.txt', span: true }),
     ]},
     gProj(), gGeoref({ meshOffset: true }), gSimplify({ local: true }),
   ]),
   osgb: () => ([
     { name: 'OSGB', fields: [
-      F('maxLod', 'int', '最大 LOD（可选）', { ph: '留空=自动' }),
-      F('enu', 'vec3', 'ENU 切平面覆盖 --enu（可选，纬度,经度,高）', { subs: ['lat°', 'lon°', 'h m'], span: true }),
+      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1 }),
+      F('enu', 'vec3', 'ENU 参考点（覆盖自动计算）', {
+        subs: [['纬度°', { min: -90, max: 90 }], ['经度°', { min: -180, max: 180 }], ['高程 m', null]],
+        span: true,
+      }),
     ]},
     gOrigin(), gProj(), gGeoref(), gSimplify(),
   ]),
 };
 const BASIC = {
   tiles: [
-    { name: '3D Tiles 基础', fields: [
-      F('zUp', 'bool', '输入为 Z-up（-Z，跳过 Y↔Z 翻转）', { span: true }),
+    { name: '3D Tiles', fields: [
+      F('zUp', 'bool', '输入已是 Z-up（跳过 Y↔Z 翻转）', { span: true }),
     ]},
-    { name: '分块与 LOD（可选，留空=自动）', fields: [
-      F('rootGeometricError', 'num', '根几何误差 -e (m)', { ph: '留空=按模型包围盒自动' }),
-      F('tileGeometricError', 'num', '瓦片误差 -t (m)', { ph: '留空=自动' }),
-      F('refine', 'select', '细化模式 -r', { opts: ['', 'ADD', 'REPLACE'] }),
-      F('minBlockDistance', 'num', '最小分块距离', { ph: '留空=自动' }),
-      F('maxLod', 'int', '最大 LOD 层级', { ph: '留空=自动' }),
+    { name: '分块与 LOD', fields: [
+      F('rootGeometricError', 'num', '根几何误差（米）', { ph: '留空=按包围盒自动', pos: true }),
+      F('tileGeometricError', 'num', '瓦片几何误差（米）', { ph: '留空=自动', pos: true }),
+      F('refine', 'select', '细化模式', { opts: ['', 'ADD', 'REPLACE'] }),
+      F('minBlockDistance', 'num', '最小分块距离（米）', { ph: '留空=自动', pos: true }),
+      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1 }),
     ]},
   ],
 };
@@ -443,7 +457,7 @@ function renderInputArea(type) {
       el('input', { type: 'file', id: 'osgbDir', webkitdirectory: true, directory: true }),
       el('div', { class: 'dropInner' },
         el('span', { class: 'ic' }, '📂'),
-        el('span', { class: 'txt' }, '点击选择 OSGB 文件夹（如 Block_1 或 Data）'),
+        el('span', { class: 'txt' }, '点击选择 OSGB 文件夹'),
         el('span', { class: 'meta', id: 'osgbMeta' }, '')));
     const fi = drop.querySelector('input');
     fi.onchange = () => updateOsgbDir(fi);
@@ -459,18 +473,18 @@ function renderInputArea(type) {
         fi.dispatchEvent(new Event('change'));
         if (anyDir) {
           const meta = $('#osgbMeta');
-          meta.textContent = '已选择（拖拽文件夹仅在本机 Chrome 下可完整展开，建议点击选择）';
+          meta.textContent = '已选择 · 拖入文件夹支持有限，建议改用点击选择';
         }
       }
     });
-    area.append(label('OSGB 文件夹（浏览器选择并上传）'), drop);
-    area.append(el('div', { class: 'hint' }, '大目录推荐上传顶层 Data 文件夹；超大 OSGB 请改用下方服务器本地路径直读'));
+    area.append(label('OSGB 数据（选择文件夹上传）'), drop);
+    area.append(el('div', { class: 'hint' }, '推荐选顶层 Data 目录；超大数据集可用下方服务器本地路径'));
     // zip 上传（服务端解压）
     const zdrop = el('div', { class: 'drop', style: 'margin-top:8px' },
       el('input', { type: 'file', id: 'osgbZip', accept: '.zip' }),
       el('div', { class: 'dropInner' },
         el('span', { class: 'ic' }, '🗜'),
-        el('span', { class: 'txt' }, '或上传 ZIP 压缩包（服务端解压，防解压炸弹）'),
+        el('span', { class: 'txt' }, '或上传 ZIP 压缩包（服务端自动解压）'),
         el('span', { class: 'meta', id: 'osgbZipMeta' }, '')));
     const zf = zdrop.querySelector('input');
     zf.onchange = () => {
@@ -481,7 +495,7 @@ function renderInputArea(type) {
     };
     area.append(zdrop);
     if (caps?.features?.localPathInput) {
-      area.append(label('或服务器本地路径（免上传，适合大型 OSGB）'));
+      area.append(label('或服务器本地路径（免上传，适合大数据）'));
       area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '/data/osgb_root/Data 或 D:\\proj\\Data' }));
     } else {
       area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '', hidden: true }));
@@ -534,6 +548,45 @@ const fileAccept = (t) => ({ tiles: '.fbx,.obj,.gltf,.glb,.dae,.3ds,.ply,.stl',
 
 /* ================ form render / collect ================ */
 function label(s) { return el('label', {}, s); }
+/* 数值参数校验与范围提示：规则与服务端 zod（schemas.js）一致；
+   仅以红框 + 行内提示呈现，不打断输入，服务端校验仍是最终防线 */
+function rangeHint(f) {
+  const p = [];
+  if (f.min != null && f.max != null) p.push(`${f.min} ~ ${f.max}`);
+  else if (f.min != null) p.push(`≥ ${f.min}`);
+  else if (f.max != null) p.push(`≤ ${f.max}`);
+  if (f.pos) p.push('> 0');
+  if (f.t === 'int') p.push('整数');
+  if (f.odd) p.push('奇数');
+  return p.length ? `取值范围：${p.join(' · ')}` : '';
+}
+function specError(f, raw) {
+  const v = String(raw ?? '').trim();
+  if (!v) return '';
+  const x = Number(v);
+  if (!Number.isFinite(x)) return '请输入数字';
+  if (f.t === 'int' && !Number.isInteger(x)) return '需为整数';
+  if (f.odd && Math.abs(x) % 2 === 0) return '取值需为奇数 (odd)';
+  if (f.min != null && x < f.min) return `不能小于 ${f.min}`;
+  if (f.max != null && x > f.max) return `不能大于 ${f.max}`;
+  if (f.pos && x <= 0) return '需大于 0';
+  return '';
+}
+function paintField(node) {
+  const err = specError(node._f, node.value);
+  node.classList.toggle('bad', !!err);
+  const h = node._hint;
+  if (h) { h.textContent = err || h.dataset.def || ''; h.classList.toggle('bad', !!err); }
+}
+function numInput(f, attrs) {
+  const s = el('input', { type: 'number', step: f.t === 'int' ? '1' : 'any',
+    ...(f.min != null ? { min: f.min } : {}), ...(f.max != null ? { max: f.max } : {}), ...attrs });
+  const rng = rangeHint(f);
+  const h = el('div', { class: 'hint' }, rng);
+  h.dataset.def = rng;
+  if (rng) { s._f = f; s._hint = h; s.addEventListener('input', () => paintField(s)); }
+  return [s, h];
+}
 function fieldNode(f) {
   const id = 'f_' + f.k.replace(/[^a-zA-Z0-9]/g, '_');
   if (f.t === 'bool') {
@@ -542,16 +595,17 @@ function fieldNode(f) {
     return el('div', { class: 'chk' + (f.span ? ' fspan' : '') }, cb, el('label', { for: id }, f.label));
   }
   if (f.t === 'select') {
-    const s = el('select', { id, 'data-k': f.k }, ...f.opts.map(o => el('option', { value: o }, o || '（不指定）')));
+    const s = el('select', { id, 'data-k': f.k }, ...f.opts.map(o => el('option', { value: o },
+      o ? (OPT_CN[o] ? `${o} · ${OPT_CN[o]}` : o) : '默认（不指定）')));
     return el('div', {}, label(f.label), s);
   }
   if (f.t === 'num' || f.t === 'int') {
-    const s = el('input', { type: 'number', id, 'data-k': f.k, step: f.t === 'int' ? '1' : 'any', placeholder: f.ph || '' });
-    return el('div', {}, label(f.label), s);
+    const [s, h] = numInput(f, { id, 'data-k': f.k, placeholder: f.ph || '' });
+    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s, h);
   }
   if (f.t === 'text') {
     const s = el('input', { type: 'text', id, 'data-k': f.k, placeholder: f.ph || '' });
-    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s);
+    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s, el('div', { class: 'hint' }, f.hint || ''));
   }
   if (f.t === 'area') {
     const s = el('textarea', { id, 'data-k': f.k, placeholder: f.ph || 'sx,sy,sz,tx,ty,tz\n12345.6,2345678.9,42.0,445000,3260000,0' });
@@ -562,10 +616,14 @@ function fieldNode(f) {
     return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s);
   }
   if (f.t === 'vec3' || f.t === 'seven') {
-    const n = f.t === 'vec3' ? 3 : 7;
-    const subs = f.subs || (f.t === 'vec3' ? ['X', 'Y', 'Z'] : ['mx', 'my', 'mz', 'rx', 'ry', 'rz', 's']);
-    const grid = el('div', { class: 'fgrid' }, ...subs.map((sb, i) =>
-      el('div', {}, label(sb), el('input', { type: 'number', step: 'any', 'data-vec': f.k, 'data-i': i }))));
+    const subs = (f.subs || (f.t === 'vec3' ? ['X', 'Y', 'Z'] : ['mx', 'my', 'mz', 'rx', 'ry', 'rz', 's']))
+      .map((x) => (Array.isArray(x) ? x : [x, null]));
+    const grid = el('div', { class: 'fgrid' }, ...subs.map(([sb, rng], i) => {
+      const cell = [label(sb)];
+      if (rng) { const [s, h] = numInput({ t: 'num', ...rng }, { 'data-vec': f.k, 'data-i': i }); cell.push(s, h); }
+      else cell.push(el('input', { type: 'number', step: 'any', 'data-vec': f.k, 'data-i': i }));
+      return el('div', {}, ...cell);
+    }));
     return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), grid);
   }
   throw new Error('field type? ' + f.t);
@@ -622,6 +680,29 @@ function collect() {
   return { params, files };
 }
 
+/* 提交前聚合校验：逐字段标红 + 汇总提示；不合法时不发送请求 */
+const VEC_CN = { origin: '坐标原点', enu: 'ENU 参考点', 'georef.sevenParameter': '七参数', 'georef.offset': '投影偏移' };
+function validateForm() {
+  const errs = [];
+  for (const n of $('#paramForm').querySelectorAll('input[data-k]')) {
+    if (!n._f) continue;
+    const e = specError(n._f, n.value);
+    if (e) { paintField(n); errs.push(`${n.closest('div').querySelector('label').textContent}：${e}`); }
+  }
+  for (const key of Object.keys(VEC_CN)) {
+    const nodes = [...$('#paramForm').querySelectorAll(`[data-vec="${key}"]`)];
+    if (!nodes.length) continue;
+    const filled = nodes.filter((n) => n.value.trim() !== '').length;
+    if (filled && filled < nodes.length) errs.push(`${VEC_CN[key]}：${nodes.length} 个值需填全，或全部留空`);
+    for (const n of nodes) {
+      if (!n._f) continue;
+      const e = specError(n._f, n.value);
+      if (e) { paintField(n); errs.push(`${VEC_CN[key]} ${e}`); }
+    }
+  }
+  return [...new Set(errs)];
+}
+
 let jsonManual = false;
 function syncJson() {
   if (jsonManual) return;
@@ -630,7 +711,7 @@ function syncJson() {
 $('#jsonGrp').querySelector('summary').addEventListener('click', () => {
   jsonManual = !jsonManual;
   $('#jsonBox').readOnly = !jsonManual;
-  $('#jsonModeLabel').textContent = jsonManual ? '手动编辑（提交以此为准）' : '预览（只读）';
+  $('#jsonModeLabel').textContent = jsonManual ? '编辑中 · 以此为准提交' : '预览（只读）';
   if (!jsonManual) { try { applyJsonToForm(JSON.parse($('#jsonBox').value)); } catch { /* keep form */ } }
 });
 function applyJsonToForm(p) { // best-effort form fill
@@ -663,7 +744,7 @@ function row(j) {
   const cancel = ['queued', 'running'].includes(j.status) ? `<button class="danger" data-act="cancel" title="取消任务">取消</button>` : '';
   return `<tr data-id="${j.id}">
     <td><span class="jobId" data-copy="${j.id}" title="点击复制完整 ID">${j.id.slice(0, 8)}</span><span class="tRel">${fmtAgo(j.createdAt)}</span></td>
-    <td><span class="typeCell"><span class="typeIc">${ICONS[j.type] || ''}</span>${j.type}</span></td>
+    <td><span class="typeCell" title="${esc(TYPE_CN[j.type] || j.type)}"><span class="typeIc">${ICONS[j.type] || ''}</span>${j.type}</span></td>
     <td><span class="badge s-${j.status}">${STATUS_CN[j.status] || j.status}</span></td>
     <td>${fmtPct(j)}</td>
     <td class="c-input"><span class="inName" title="${esc(j.error ? j.error.code + ': ' + j.error.message : j.inputName || '')}">${esc(j.inputName || '')}</span></td>
@@ -673,8 +754,8 @@ function row(j) {
 function render() {
   const arr = [...jobs.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   $('#jobs').innerHTML = arr.length ? arr.map(row).join('')
-    : `<tr><td colspan="6"><div class="empty"><div class="ic">🗂</div><p>还没有处理任务</p>
-        <span class="hint">从左侧选择类型、上传文件后点「提交任务」，进度会实时显示在这里</span></div></td></tr>`;
+    : `<tr><td colspan="6"><div class="empty"><div class="ic">🗂</div><p>暂无任务</p>
+        <span class="hint">左侧选择类型并上传文件，提交后进度实时显示在这里</span></div></td></tr>`;
   renderStats(arr);
 }
 function renderStats(arr) {
@@ -687,17 +768,27 @@ function renderStats(arr) {
     + `<span class="stat" style="margin-left:auto">共 ${arr.length} 个任务</span>`;
 }
 async function loadJobs() {
-  const r = await fetch('/api/v1/jobs?limit=50');
-  (await r.json()).items.forEach(j => jobs.set(j.id, j));
-  render();
+  try {
+    const r = await fetch('/api/v1/jobs?limit=50');
+    if (!r.ok) return;
+    (await r.json()).items.forEach(j => jobs.set(j.id, j));
+    render();
+  } catch { /* 服务离线：由健康探针负责提示与重连 */ }
 }
 $('#jobs').addEventListener('click', async (e) => {
   const btn = e.target.closest('button'); const idEl = e.target.closest('[data-copy]');
-  if (idEl) { await navigator.clipboard?.writeText(idEl.dataset.copy).catch(() => {}); toast('已复制任务 ID', 'info', 1800); return; }
+  if (idEl) { await navigator.clipboard?.writeText(idEl.dataset.copy).catch(() => {}); toast('任务 ID 已复制', 'info', 1800); return; }
   if (!btn) return;
   const id = btn.closest('tr').dataset.id;
-  if (btn.dataset.act === 'cancel') { await fetch(`/api/v1/jobs/${id}/cancel`, { method: 'POST', headers: {} }); toast('已请求取消', 'info'); }
-  if (btn.dataset.act === 'del') { await fetch(`/api/v1/jobs/${id}`, { method: 'DELETE', headers: {} }); jobs.delete(id); toast('任务已删除', 'ok'); }
+  const call = async (url, method, okMsg, kind = 'ok') => {
+    try {
+      const r = await fetch(url, { method, headers: {} });
+      if (!r.ok) { const b = await r.json().catch(() => null); toast(b?.error?.message || `操作失败 (HTTP ${r.status})`, 'err', 5000); return false; }
+      toast(okMsg, kind); return true;
+    } catch { toast('服务不可达，操作未执行', 'err'); return false; }
+  };
+  if (btn.dataset.act === 'cancel') await call(`/api/v1/jobs/${id}/cancel`, 'POST', '已提交取消请求', 'info');
+  if (btn.dataset.act === 'del') { if (await call(`/api/v1/jobs/${id}`, 'DELETE', '任务已删除')) jobs.delete(id); }
   if (btn.dataset.act === 'log') openLog(id);
   loadJobs();
 });
@@ -717,8 +808,8 @@ async function openLog(id) {
   // callback clobbers live [progress] lines already appended (was a real race)
   try {
     const o = await (await fetch(`/api/v1/jobs/${id}/log?tail=120`)).json();
-    $('#logBox').textContent = (o.lines || []).join('\n') + '\n—— 以下为实时事件 ——\n';
-  } catch { $('#logBox').textContent = '—— 实时事件 ——\n'; }
+    $('#logBox').textContent = (o.lines || []).join('\n') + '\n—— 以下为实时日志 ——\n';
+  } catch { $('#logBox').textContent = '—— 实时日志 ——\n'; }
   scroll();
   es = new EventSource(`/api/v1/jobs/${id}/events`);
   es.addEventListener('log', (m) => {
@@ -748,6 +839,8 @@ $('#submit').onclick = async () => {
     try { params = JSON.parse($('#jsonBox').value); }
     catch (e) { showMsg('JSON 解析失败: ' + e.message, 'err'); toast('JSON 解析失败', 'err'); return; }
   } else {
+    const errs = validateForm();
+    if (errs.length) { showMsg('请修正参数后再提交：' + errs.join('；'), 'err'); toast('参数超出有效范围', 'err', 2600); return; }
     const c = collect(); params = c.params;
   }
   const type = params.type = $('#type').value;
@@ -789,13 +882,13 @@ $('#submit').onclick = async () => {
       if (cfg) fd.append('cfg', cfg, cfg.name);
       res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
     } else if (pathVal || !file) {
-      if (type !== 'osgb' && !pathVal && !file) { showMsg('请选择输入文件或服务器本地路径', 'err'); return; }
-      if (type === 'osgb' && !pathVal && !osgbFiles.length) { showMsg('请选择 OSGB 文件夹（或填写服务器本地路径）', 'err'); return; }
+      if (type !== 'osgb' && !pathVal && !file) { showMsg('请选择输入文件，或填写服务器本地路径', 'err'); return; }
+      if (type === 'osgb' && !pathVal && !osgbFiles.length) { showMsg('请选择 OSGB 文件夹，或填写服务器本地路径', 'err'); return; }
       res = await fetch('/api/v1/jobs', { method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...params, inputPath: pathVal }) });
     } else {
-      showMsg('JSON 模式下仅支持服务器本地路径输入（inputPath）', 'err');
+      showMsg('JSON 模式仅支持「服务器本地路径」输入', 'err');
       return;
     }
     const body = await res.json().catch(() => null);
@@ -817,29 +910,41 @@ $('#submit').onclick = async () => {
 
 /* ================ init ================ */
 $('#type').append(...['tiles', 'terrain', 'image', 'geojson', 'mesh', 'osgb']
-  .map(t => el('option', { value: t }, `${ICONS[t]} ${t}`)));
+  .map(t => el('option', { value: t }, `${ICONS[t]} ${t} · ${TYPE_CN[t]}`)));
 $('#type').onchange = () => {
   const t = $('#type').value;
   $('#typeDesc').textContent = DESC[t];
   renderInputArea(t); renderForm(t);
 };
-try {
-  caps = await (await fetch('/api/v1/capabilities')).json();
+async function probeCaps() {
   const pill = $('#health');
-  pill.classList.add('online');
-  pill.innerHTML = `<i></i><span class="hide-sm">在线 · </span><span>${caps.jobTypes.join(' / ')}${caps.features.osgb ? '' : '（无 osgb）'}</span>`;
-  if (!caps.features.osgb) $('#type').querySelector('[value=osgb]')?.remove();
-  if (caps.client?.canManageWhitelist) $('#wlLink').style.display = '';
-  ipNote();
-} catch {
-  const pill = $('#health');
-  pill.classList.add('offline');
-  pill.innerHTML = '<i></i><span>服务不可达</span>';
+  try {
+    caps = await (await fetch('/api/v1/capabilities')).json();
+    pill.classList.remove('offline'); pill.classList.add('online');
+    pill.innerHTML = `<i></i><span class="hide-sm">在线 · </span><span>${caps.jobTypes.length} 种任务类型</span>`;
+    if (!caps.features.osgb) $('#type').querySelector('[value=osgb]')?.remove();
+    if (caps.client?.canManageWhitelist) $('#wlLink').style.display = '';
+    ipNote();
+    return true;
+  } catch {
+    caps = null;
+    const n = $('#ipNote');
+    if (n && !n.innerHTML.includes('IP <b')) n.textContent = 'IP 授权状态未知（服务不可达）';
+    pill.classList.remove('online'); pill.classList.add('offline');
+    pill.innerHTML = '<i></i><span>服务不可达，自动重试…</span>';
+    return false;
+  }
 }
+await probeCaps();
 $('#type').value = 'tiles';
 $('#type').onchange();
 await loadJobs();
-setInterval(() => { if ($('#logPanel').hidden) loadJobs(); }, 5000);
+setInterval(async () => {
+  // 每轮都探测健康：loadJobs 的失败被静默吞掉，不能据它判断在线
+  const wasOffline = !$('#health').classList.contains('online');
+  const ok = await probeCaps();
+  if (ok && (wasOffline || $('#logPanel').hidden)) loadJobs();
+}, 5000);
 </script>
 </body>
 </html>
