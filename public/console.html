@@ -759,8 +759,11 @@ function render() {
   renderStats(arr);
 }
 function renderStats(arr) {
-  const c = { running: 0, queued: 0, succeeded: 0, failed: 0, other: 0 };
-  arr.forEach(j => { if (c[j.status] !== undefined) c[j.status]++; else c.other++; });
+  // 优先用服务端全量 byStatus，避免 50 条窗口外的计数丢失；metrics 不可用时退回本地统计
+  const c = jobStats
+    ? { running: jobStats.running | 0, queued: jobStats.queued | 0, succeeded: jobStats.succeeded | 0, failed: jobStats.failed | 0 }
+    : { running: 0, queued: 0, succeeded: 0, failed: 0, other: 0 };
+  if (!jobStats) arr.forEach(j => { if (c[j.status] !== undefined) c[j.status]++; else c.other++; });
   const s = $('#stats');
   const total = jobsTotal ?? arr.length;
   s.innerHTML = [
@@ -769,12 +772,20 @@ function renderStats(arr) {
     + `<span class="stat" style="margin-left:auto"${total > arr.length ? ` title="仅显示最近 ${arr.length} 条"` : ''}>共 ${total} 个任务</span>`;
 }
 let jobsTotal = null;   // 服务端任务总数（列表仅拉最近一页）
+let jobStats = null;    // 服务端全量 byStatus（不受 50 条窗口限制）
 async function loadJobs() {
   try {
-    const r = await fetch('/api/v1/jobs?limit=50');
-    if (!r.ok) return;
-    const o = await r.json();
+    const [listR, mxR] = await Promise.all([
+      fetch('/api/v1/jobs?limit=50'),
+      fetch('/api/v1/metrics').catch(() => null),
+    ]);
+    if (!listR.ok) return;
+    const o = await listR.json();
     jobsTotal = o.total;
+    if (mxR?.ok) {
+      const mx = await mxR.json().catch(() => null);
+      if (mx?.jobs) { jobStats = mx.jobs.byStatus ?? null; jobsTotal = mx.jobs.total ?? jobsTotal; }
+    }
     o.items.forEach(j => jobs.set(j.id, j));
     render();
   } catch { /* 服务离线：由健康探针负责提示与重连 */ }
