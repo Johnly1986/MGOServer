@@ -762,16 +762,20 @@ function renderStats(arr) {
   const c = { running: 0, queued: 0, succeeded: 0, failed: 0, other: 0 };
   arr.forEach(j => { if (c[j.status] !== undefined) c[j.status]++; else c.other++; });
   const s = $('#stats');
+  const total = jobsTotal ?? arr.length;
   s.innerHTML = [
     ['运行中', c.running, 'warn'], ['排队中', c.queued, 'dim'], ['成功', c.succeeded, 'ok'], ['失败', c.failed, 'err'],
   ].map(([t, n, k]) => `<span class="stat"><b style="color:var(--${k})">${n}</b>${t}</span>`).join('')
-    + `<span class="stat" style="margin-left:auto">共 ${arr.length} 个任务</span>`;
+    + `<span class="stat" style="margin-left:auto"${total > arr.length ? ` title="仅显示最近 ${arr.length} 条"` : ''}>共 ${total} 个任务</span>`;
 }
+let jobsTotal = null;   // 服务端任务总数（列表仅拉最近一页）
 async function loadJobs() {
   try {
     const r = await fetch('/api/v1/jobs?limit=50');
     if (!r.ok) return;
-    (await r.json()).items.forEach(j => jobs.set(j.id, j));
+    const o = await r.json();
+    jobsTotal = o.total;
+    o.items.forEach(j => jobs.set(j.id, j));
     render();
   } catch { /* 服务离线：由健康探针负责提示与重连 */ }
 }
@@ -900,7 +904,7 @@ $('#submit').onclick = async () => {
       toast(`提交失败：${body?.error?.message || 'HTTP ' + res.status}`, 'err', 5000);
       return;
     }
-    jobs.set(body.id, body); render(); openLog(body.id);
+    jobs.set(body.id, body); if (jobsTotal != null) jobsTotal += 1; render(); openLog(body.id);
     showMsg(`任务已提交：${body.id.slice(0, 8)}`, 'ok');
     toast('任务已提交，正在处理…', 'ok');
   } finally {
