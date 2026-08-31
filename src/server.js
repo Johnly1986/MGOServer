@@ -26,8 +26,8 @@ function forbiddenPage(ip) {
   code{font:12px ui-monospace,Consolas,monospace;color:#7cc0ff}
 </style></head><body><div class="card">
   <h1><span class="code">403</span> · 访问被拒绝</h1>
-  <p>当前客户端 IP <span class="ip">${ip}</span> 不在服务白名单中。</p>
-  <p>请从服务器本机访问，或在本机执行 <code>POST /api/v1/whitelist</code> 将该 IP 加入白名单。</p>
+  <p>您的 IP <span class="ip">${ip}</span> 不在服务白名单中，页面与接口均已拦截。</p>
+  <p>如需授权：请在服务器本机打开 <code>/whitelist.html</code> 白名单设置页，添加该 IP 后保存，立即生效。</p>
   <div class="hint">MGO 服务 · IP 白名单访问控制</div>
 </div></body></html>`;
 }
