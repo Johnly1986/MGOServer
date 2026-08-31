@@ -1,0 +1,48 @@
+{
+  "name": "mgoserver",
+  "version": "0.1.0",
+  "description": "MGOServer — Node.js HTTP service port for MGO (Mesh Generation Optimizer): job API + CesiumJS viewer",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test \"test/*.test.js\"",
+    "test:ui": "node ui-test.mjs",
+    "fixture:terrain": "python3 scripts/generate-test-tif.py test/fixtures",
+    "sync:cesium": "node scripts/sync-cesium.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Johnly1986/MGOServer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Johnly1986/MGOServer/issues"
+  },
+  "homepage": "https://github.com/Johnly1986/MGOServer#readme",
+  "keywords": [
+    "mgo",
+    "3d-tiles",
+    "cesium",
+    "quantized-mesh",
+    "osgb",
+    "mesh-optimizer",
+    "digital-twin"
+  ],
+  "dependencies": {
+    "@fastify/multipart": "^9.0.1",
+    "@fastify/static": "^8.0.3",
+    "fastify": "^5.2.0",
+    "tree-kill": "^1.2.2",
+    "yauzl": "^3.4.0",
+    "zod": "^3.24.1"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "yazl": "^3.3.1"
+  }
+}

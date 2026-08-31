@@ -1,0 +1,25 @@
+# deps
+node_modules/
+
+# runtime state: jobs, uploads, artifacts, and the persisted IP whitelist
+# (workspace/whitelist.json is per-deployment config, deliberately not source)
+workspace/
+
+# self-hosted Cesium, regenerated with `npm run sync:cesium`
+public/cesium/
+
+# local deployment config (see .env.example)
+.env
+.env.local
+
+# test / tooling output — the checked-in fixtures under test/fixtures/ stay tracked
+test-results/
+playwright-report/
+ui-test-results/
+*.log
+!test/fixtures/*.log
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MGO 任务控制台</title>
+<style>
+  :root {
+    --bg:#0e1116; --bg2:#12161d; --panel:#171c24; --panel2:#1c222c;
+    --line:#242c38; --line2:#2d3744;
+    --fg:#e6ecf5; --dim:#93a0b4; --dim2:#6b7889;
+    --acc:#4da3ff; --acc2:#7cc0ff; --acc-d:#1b6fd6;
+    --ok:#3ecf6e; --warn:#f0b143; --err:#ef5b68; --info:#4da3ff;
+    --radius:12px; --shadow:0 8px 24px rgba(0,0,0,.35);
+  }
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; font:14px/1.55 "PingFang SC","Microsoft YaHei","Segoe UI",system-ui,-apple-system,sans-serif;
+         background:radial-gradient(1200px 600px at 70% -10%, #16202e 0%, var(--bg) 55%) fixed, var(--bg);
+         color:var(--fg); min-height:100vh; }
+  ::selection { background:rgba(77,163,255,.35); }
+  a { color:var(--acc2); text-decoration:none; } a:hover { text-decoration:underline; }
+
+  /* ---------- header ---------- */
+  header { position:sticky; top:0; z-index:50; backdrop-filter:blur(10px);
+           background:rgba(14,17,22,.82); border-bottom:1px solid var(--line);
+           padding:10px 20px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:10px; }
+  .logo { width:30px; height:30px; border-radius:9px; flex:none;
+          background:linear-gradient(135deg,var(--acc) 0%,var(--acc-d) 100%);
+          display:grid; place-items:center; color:#fff; font-weight:800; font-size:15px;
+          box-shadow:0 2px 8px rgba(27,111,214,.45); }
+  .brand h1 { font-size:15.5px; margin:0; letter-spacing:.2px; }
+  .brand .ver { color:var(--dim2); font-size:11px; font-family:ui-monospace,Consolas,monospace; }
+  .headRight { margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .pill { display:inline-flex; align-items:center; gap:7px; padding:4px 12px; border-radius:999px;
+          font-size:12px; border:1px solid var(--line2); background:var(--panel); color:var(--dim); }
+  .pill i { width:7px; height:7px; border-radius:50%; background:var(--dim2); }
+  .pill.online i { background:var(--ok); box-shadow:0 0 6px var(--ok); animation:pulse 2s infinite; }
+  .pill.offline i { background:var(--err); }
+  @keyframes pulse { 50% { opacity:.45; } }
+  .linkBtn { padding:5px 12px; border-radius:8px; border:1px solid var(--line2); background:var(--panel);
+             color:var(--acc2); font-size:12.5px; cursor:pointer; transition:.15s; }
+  .linkBtn:hover { border-color:var(--acc); background:rgba(77,163,255,.1); text-decoration:none; }
+
+  /* ---------- layout ---------- */
+  main { display:grid; grid-template-columns:minmax(350px,470px) minmax(0,1fr); gap:16px;
+         padding:18px 20px 40px; align-items:start; max-width:1460px; margin:0 auto; }
+  @media (max-width:980px) { main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+           box-shadow:var(--shadow); padding:16px 18px; min-width:0; }
+  .panelHead { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .panelHead h3 { margin:0; font-size:14.5px; }
+  .panelHead .tag { margin-left:auto; color:var(--dim2); font-size:11.5px; }
+
+  /* ---------- form ---------- */
+  label { display:block; margin:10px 0 4px; color:var(--dim); font-size:12px; font-weight:500; }
+  input, select, textarea, button { font:inherit; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    width:100%; background:var(--bg2); color:var(--fg); border:1px solid var(--line2);
+    border-radius:8px; padding:9px 11px; font-size:13.5px; transition:border-color .15s, box-shadow .15s; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--acc);
+    box-shadow:0 0 0 3px rgba(77,163,255,.18); }
+  select { appearance:none; -webkit-appearance:none; padding-right:30px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2393a0b4' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat; background-position:right 11px center; cursor:pointer; }
+  textarea { font:12px/1.5 ui-monospace,Consolas,monospace; resize:vertical; min-height:84px; }
+  #jsonBox { min-height:190px; }
+  .hint { color:var(--dim2); font-size:11px; margin-top:3px; }
+  ::placeholder { color:var(--dim2); opacity:.8; }
+
+  /* toggle switch — styled directly on the native checkbox so programmatic
+     check()/uncheck() and label clicks keep working */
+  .chk { display:flex; align-items:center; gap:9px; margin-top:11px; cursor:pointer; user-select:none; }
+  .chk input { appearance:none; -webkit-appearance:none; width:34px; height:19px; flex:none;
+               border-radius:999px; background:#2b3543; cursor:pointer; position:relative;
+               transition:background .18s; margin:0; }
+  .chk input::after { content:''; position:absolute; top:2.5px; left:3px; width:14px; height:14px;
+                      border-radius:50%; background:#9fb0c4; transition:left .18s, background .18s; }
+  .chk input:checked { background:var(--acc-d); }
+  .chk input:checked::after { left:17px; background:#fff; }
+  .chk input:focus-visible { outline:none; box-shadow:0 0 0 3px rgba(77,163,255,.3); }
+  .chk label { margin:0; color:var(--fg); font-size:13px; font-weight:400; cursor:pointer; }
+
+  /* file dropzone */
+  .drop { display:block; margin-top:4px; position:relative; }
+  .drop input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+  .dropInner { display:flex; flex-direction:column; align-items:center; gap:4px; padding:20px 12px;
+               border:1.5px dashed var(--line2); border-radius:10px; background:var(--bg2);
+               transition:.18s; text-align:center; }
+  .drop:hover .dropInner, .drop.drag .dropInner { border-color:var(--acc); background:rgba(77,163,255,.06); }
+  .drop .ic { font-size:22px; }
+  .drop .txt { font-size:13px; color:var(--dim); }
+  .drop .meta { font-size:11px; color:var(--acc2); font-family:ui-monospace,Consolas,monospace; word-break:break-all; }
+  .drop.drag .txt { color:var(--acc2); }
+
+  /* groups */
+  details.grp { border:1px solid var(--line); border-radius:10px; margin-top:10px; overflow:hidden;
+                background:var(--bg2); }
+  details.grp > summary { padding:10px 13px; cursor:pointer; font-size:13px; color:var(--fg);
+                          background:var(--panel2); user-select:none; list-style:none;
+                          display:flex; align-items:center; gap:8px; transition:background .15s; }
+  details.grp > summary:hover { background:#202936; }
+  details.grp > summary .chev { color:var(--dim2); font-size:10px; transition:transform .18s; }
+  details.grp[open] > summary .chev { transform:rotate(90deg); }
+  details.grp > summary .cnt { margin-left:auto; color:var(--dim2); font-size:11px;
+                               font-family:ui-monospace,Consolas,monospace; }
+  .gbody { padding:4px 14px 14px; }
+  .fgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:6px 12px; }
+  .fspan { grid-column:1/-1; }
+  details.grp .fgrid input[type=number] { font-variant-numeric:tabular-nums; }
+
+  /* token / json collapsibles */
+  details.mini { margin-top:10px; }
+  details.mini > summary { cursor:pointer; list-style:none; font-size:12px; color:var(--dim);
+                           padding:6px 2px; user-select:none; display:flex; align-items:center; gap:7px; }
+  details.mini > summary .chev { color:var(--dim2); font-size:10px; transition:transform .18s; }
+  details.mini[open] > summary .chev { transform:rotate(90deg); }
+  details.mini > summary:hover { color:var(--acc2); }
+
+  /* submit */
+  .submitRow { display:flex; align-items:center; gap:10px; margin-top:14px; }
+  #submit { flex:1; padding:11px 16px; border:none; border-radius:10px; cursor:pointer;
+            background:linear-gradient(135deg,var(--acc) 0%,var(--acc-d) 100%);
+            color:#fff; font-size:14.5px; font-weight:600; letter-spacing:.5px;
+            box-shadow:0 3px 12px rgba(27,111,214,.4); transition:.18s; display:flex; align-items:center; justify-content:center; gap:8px; }
+  #submit:hover { filter:brightness(1.12); box-shadow:0 5px 16px rgba(27,111,214,.5); }
+  #submit:active { transform:translateY(1px); }
+  #submit:disabled { opacity:.55; cursor:wait; filter:none; }
+  .spinner { width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,.35);
+             border-top-color:#fff; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #msg { margin-top:10px; font-size:12px; min-height:0; white-space:pre-wrap; word-break:break-all;
+         padding:0; display:none; }
+  #msg.show { display:block; padding:9px 11px; border-radius:8px; }
+  #msg.err { color:#ffb3ba; background:rgba(239,91,104,.12); border:1px solid rgba(239,91,104,.3); }
+  #msg.ok { color:#b8f0cd; background:rgba(62,207,110,.1); border:1px solid rgba(62,207,110,.3); }
+
+  /* ---------- stats + table ---------- */
+  .stats { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .stat { padding:6px 12px; border-radius:9px; border:1px solid var(--line); background:var(--bg2);
+          font-size:12px; color:var(--dim); display:flex; gap:6px; align-items:center; }
+  .stat b { font-variant-numeric:tabular-nums; color:var(--fg); font-size:13px; }
+  .scrollx { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--bg2); }
+  table { width:100%; border-collapse:collapse; font-size:13px; min-width:640px; }
+  th, td { text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  tr:last-child td { border-bottom:none; }
+  th { color:var(--dim2); font-weight:500; font-size:11.5px; letter-spacing:.4px;
+       background:var(--panel2); position:sticky; top:0; white-space:nowrap; }
+  tbody tr { transition:background .12s; }
+  tbody tr:hover { background:rgba(77,163,255,.05); }
+  td { min-width:0; }
+  .jobId { font-family:ui-monospace,Consolas,monospace; font-size:12px; color:var(--dim);
+           cursor:pointer; border-bottom:1px dashed var(--line2); }
+  .jobId:hover { color:var(--acc2); }
+  .tRel { display:block; color:var(--dim2); font-size:11px; margin-top:1px; }
+  .typeCell { display:flex; align-items:center; gap:7px; white-space:nowrap; }
+  .typeIc { font-size:14px; }
+  .inName { max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+            font-family:ui-monospace,Consolas,monospace; font-size:12px; color:var(--dim); }
+  .badge { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px;
+           font-size:11.5px; font-weight:600; white-space:nowrap; background:#242d3a; }
+  .badge::before { content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .s-queued { color:#a8b4c6; } .s-running { color:var(--warn); } .s-running::before { animation:pulse 1.2s infinite; }
+  .s-succeeded { color:var(--ok); } .s-failed { color:var(--err); } .s-usage_error { color:#ff9d6b; }
+  .s-canceled { color:var(--dim2); }
+  .bar { height:6px; background:#2a3442; border-radius:3px; overflow:hidden; min-width:110px; }
+  .bar i { display:block; height:100%; border-radius:3px; width:0%;
+           background:linear-gradient(90deg,var(--acc-d),var(--acc2)); transition:width .35s; }
+  .bar.run i { background:linear-gradient(90deg,var(--acc-d),var(--acc2),var(--acc-d));
+               background-size:200% 100%; animation:flow 1.6s linear infinite; }
+  @keyframes flow { to { background-position:-200% 0; } }
+  .pct { display:block; margin-top:3px; font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums; }
+  .act { display:flex; gap:6px; flex-wrap:nowrap; }
+  .act button, .act a.btn { width:auto; padding:5px 11px; margin:0; font-size:12px; font-weight:500;
+                border-radius:7px; cursor:pointer; transition:.15s; white-space:nowrap;
+                background:transparent; color:var(--acc2); border:1px solid var(--line2); text-decoration:none;
+                display:inline-block; text-align:center; }
+  .act button:hover, .act a.btn:hover { border-color:var(--acc); background:rgba(77,163,255,.12); text-decoration:none; }
+  .act button.danger:hover { border-color:var(--err); color:var(--err); background:rgba(239,91,104,.1); }
+  .act button:disabled { opacity:.35; cursor:default; }
+  .empty { text-align:center; padding:34px 12px; color:var(--dim2); }
+  .empty .ic { font-size:30px; opacity:.6; }
+  .empty p { margin:8px 0 2px; font-size:13px; }
+
+  /* ---------- log panel ---------- */
+  #logPanel { margin-top:14px; }
+  .logHead { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .logHead h4 { margin:0; font-size:13px; font-weight:600; }
+  .logHead .sp { margin-left:auto; display:flex; gap:6px; align-items:center; }
+  .logHead button { margin:0; padding:4px 11px; font-size:12px; border-radius:7px; cursor:pointer;
+                    background:transparent; color:var(--dim); border:1px solid var(--line2); transition:.15s; }
+  .logHead button:hover { color:var(--acc2); border-color:var(--acc); }
+  #logBox { background:#0a0d12; border:1px solid var(--line); border-radius:10px; padding:11px 13px;
+            font:11.5px/1.6 ui-monospace,Consolas,monospace; height:260px; overflow:auto;
+            white-space:pre-wrap; color:#a5b4c9; word-break:break-all; }
+  #logBox .t-err { color:#ff9aa2; } #logBox .t-prog { color:var(--ok); } #logBox .t-status { color:var(--acc2); }
+
+  /* ---------- toast ---------- */
+  #toasts { position:fixed; top:14px; right:14px; z-index:999; display:flex; flex-direction:column; gap:8px;
+            max-width:min(360px, calc(100vw - 28px)); }
+  .toast { display:flex; gap:9px; align-items:flex-start; padding:11px 14px; border-radius:10px;
+           font-size:13px; line-height:1.45; box-shadow:var(--shadow); animation:slideIn .22s ease-out;
+           border:1px solid; background:rgba(20,26,34,.96); backdrop-filter:blur(8px); }
+  .toast.out { animation:fadeOut .3s forwards; }
+  @keyframes slideIn { from { transform:translateX(16px); opacity:0; } }
+  @keyframes fadeOut { to { transform:translateY(-6px); opacity:0; } }
+  .toast .t-ic { font-size:15px; flex:none; }
+  .toast.ok { border-color:rgba(62,207,110,.4); } .toast.ok .t-ic { color:var(--ok); }
+  .toast.err { border-color:rgba(239,91,104,.45); } .toast.err .t-ic { color:var(--err); }
+  .toast.info { border-color:rgba(77,163,255,.4); } .toast.info .t-ic { color:var(--acc); }
+  .toast .t-x { margin-left:auto; cursor:pointer; color:var(--dim2); padding-left:10px; }
+
+  @media (max-width:640px) {
+    .c-input { display:none; }
+    .act button { padding:8px 13px; }
+    input[type=text], input[type=password], input[type=number], select, button { padding:11px 10px; }
+    main { padding:14px 12px 30px; }
+    .headRight .pill span.hide-sm { display:none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">M</div>
+    <h1>MGO 任务控制台</h1>
+    <span class="ver">v0.1.0</span>
+  </div>
+  <div class="headRight">
+    <span class="pill" id="health"><i></i><span>探测服务中…</span></span>
+    <a class="linkBtn" id="wlLink" href="/whitelist.html" style="display:none" title="仅本机可管理">⚙ 白名单设置</a>
+    <a class="linkBtn" href="/viewer.html" target="_blank">🗺 打开查看器</a>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="panelHead"><h3>新建处理任务</h3><span class="tag">可选参数均为 CLI 高级项</span></div>
+
+    <div class="hint" id="ipNote" style="margin-bottom:6px">检查客户端 IP 授权…</div>
+
+    <label>任务类型</label>
+    <select id="type"></select>
+    <div class="typeDesc hint" id="typeDesc"></div>
+
+    <div id="inputArea"></div>
+
+    <form id="paramForm" onsubmit="return false"></form>
+
+    <details class="mini" id="jsonGrp">
+      <summary><span class="chev">▶</span> ⚙ JSON 参数：<span id="jsonModeLabel">预览（只读）</span></summary>
+      <textarea id="jsonBox" spellcheck="false" readonly></textarea>
+    </details>
+
+    <div class="submitRow">
+      <button id="submit">▶ 提交任务</button>
+    </div>
+    <div id="msg"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panelHead">
+      <h3>任务列表</h3>
+      <span class="tag" id="autoTag">每 5s 自动刷新</span>
+      <button id="refreshBtn" class="linkBtn" style="margin-left:auto">⟳ 刷新</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="scrollx">
+      <table>
+        <thead><tr><th>任务</th><th>类型</th><th>状态</th><th>进度</th><th class="c-input">输入</th><th>操作</th></tr></thead>
+        <tbody id="jobs"></tbody>
+      </table>
+    </div>
+    <div id="logPanel" hidden>
+      <div class="logHead">
+        <h4>事件流 / 日志</h4>
+        <span class="badge s-running mono" id="logJob" style="font-family:ui-monospace,Consolas,monospace"></span>
+        <span class="sp">
+          <button id="copyLogBtn" title="复制日志">⧉ 复制</button>
+          <button id="closeLogBtn">✕ 关闭</button>
+        </span>
+      </div>
+      <div id="logBox"></div>
+    </div>
+  </section>
+</main>
+
+<div id="toasts"></div>
+
+<script type="module">
+const $ = (s) => document.querySelector(s);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else if (v === true) n.setAttribute(k, '');
+    else if (v !== false && v !== undefined && v !== null) n.setAttribute(k, v);
+  }
+  for (const k of kids) n.append(k.nodeType ? k : document.createTextNode(k));
+  return n;
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtAgo = (iso) => {
+  if (!iso) return '';
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 8) return '刚刚';
+  if (s < 60) return Math.floor(s) + '秒前';
+  if (s < 3600) return Math.floor(s / 60) + '分钟前';
+  if (s < 86400) return Math.floor(s / 3600) + '小时前';
+  return Math.floor(s / 86400) + '天前';
+};
+
+/* ================ toasts ================ */
+function toast(msg, type = 'info', ms = 3600) {
+  const box = $('#toasts');
+  const t = el('div', { class: 'toast ' + type },
+    el('span', { class: 't-ic' }, { ok: '✓', err: '✕', info: 'ℹ' }[type] || 'ℹ'),
+    el('span', { class: 't-msg' }, msg),
+    el('span', { class: 't-x', onclick: () => { t.classList.add('out'); setTimeout(() => t.remove(), 300); } }, '✕'));
+  box.append(t);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, ms);
+}
+
+/* ================ client IP / whitelist note ================ */
+const ipNote = () => {
+  const n = $('#ipNote');
+  if (!n || !caps?.client) return;
+  const { ip, allowed } = caps.client;
+  n.innerHTML = allowed
+    ? `🟢 当前 IP <b>${esc(ip)}</b> 已在白名单，可提交任务（本机始终允许）`
+    : `🔴 当前 IP <b>${esc(ip)}</b> 不在白名单，提交将被拒绝 —— 请在本机执行
+       <span class="mono">POST /api/v1/whitelist</span> 添加，或从本机访问`;
+};
+const showMsg = (text, kind) => {
+  const m = $('#msg');
+  m.textContent = text;
+  m.className = kind || '';
+  m.style.display = text ? 'block' : 'none';
+};
+
+/* ================ field spec ================ */
+const ICONS = { tiles: '🏗', terrain: '⛰', image: '🛰', geojson: '📍', mesh: '🧊', osgb: '📷' };
+const DESC = {
+  tiles: 'FBX/OBJ 等模型 → 3D Tiles（b3dm + tileset.json），支持配准与投影',
+  terrain: 'GeoTIFF DEM → Cesium Quantized-Mesh 地形瓦片（条带式 TIF）',
+  image: 'DOM 正射影像 GeoTIFF → Web Mercator TMS 瓦片',
+  geojson: 'GeoJSON 坐标系转换（逐顶点投影）',
+  mesh: '模型简化 + 坐标投影 → glb/obj/fbx（Assimp 按扩展名导出）',
+  osgb: 'OSGB 倾斜摄影（DJI Terra / ContextCapture）→ 3D Tiles：浏览器选文件夹上传，或服务器本地路径直读',
+};
+const F = (k, t, label, o = {}) => ({ k, t, label, ...o });
+const gProj = () => el2('投影 / CRS（可选）', [
+  F('proj.crs', 'text', '内联 CRS：EPSG:4547 | WKT | +proj=…', { span: true, ph: '如 EPSG:4547' }),
+  F('@prj', 'file', '或上传 .prj / .wkt 文件（优先于内联）', { accept: '.prj,.wkt,.proj', span: true }),
+]);
+const gOrigin = (label = '坐标原点 origin（投影坐标 E,N,H m）') => el2(label, [
+  F('origin', 'vec3', 'Origin', { subs: ['E/X (m)', 'N/Y (m)', 'H (m)'] }),
+]);
+const gGeoref = ({ meshOffset = false } = {}) => {
+  const g = el2('地理配准 georef（可选）', [
+    F('georef.mode', 'select', '配准方式（--7p/--cps 可自动判定，可不选）', { opts: ['', '7param', 'multipos', 'anchor'] }),
+    F('georef.fitOrder', 'select', '拟合阶数（仅 multipos）', { opts: ['', '1', '2', '3'] }),
+    F('georef.autoCrs', 'bool', '自动探测源 CRS（仅 multipos）'),
+    F('georef.sevenParameter', 'seven', '七参数：平移 m | 旋转 角秒 | 尺度 ppm', { span: true }),
+    F('georef.controlPoints', 'area', '控制点 CSV 文本（表头 sx,sy,sz,tx,ty,tz）', { span: true }),
+    F('@cps', 'file', '或上传控制点 .csv 文件（优先于文本）', { accept: '.csv,.txt', span: true }),
+  ]);
+  if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移 --offset', { subs: ['dE', 'dN', 'dH'] }));
+  return g;
+};
+const gSimplify = ({ local = false, errPh = '留空=不简化' } = {}) => {
+  const g = el2('简化 simplify（可选）', [
+    F('simplify.error', 'num', '误差 error', { ph: errPh }),
+    F('simplify.normalWeight', 'num', '法线权重 nweight', { ph: '留空=0.1' }),
+    F('simplify.threshold', 'num', '三角比阈值 threshold', { ph: '留空=0.1' }),
+    // mesh 的 -L 是带值布尔且 CLI 默认开 → 默认勾选；其余类型默认关
+    F('simplify.lockBorder', 'bool', '锁边防裂 lock-border', local ? { def: true } : {}),
+  ]);
+  if (local) g.fields.push(F('simplify.localError', 'bool', '绝对误差 local'));
+  return g;
+};
+function el2(name, fields) { return { name, fields }; }
+
+const UI = {
+  tiles: () => [gProj(), gOrigin(), gGeoref(), gSimplify()],
+  terrain: () => ([
+    { name: '地形参数', fields: [
+      F('maxLod', 'int', '最大 LOD 层级', { ph: '留空=自动' }),
+      F('samplesPerTile', 'int', '每瓦片采样（奇数）', { ph: '65' }),
+      F('normals', 'bool', 'OctVertexNormals 顶点法线', { def: true }),
+    ]},
+    gOrigin('TIF 基点覆盖 --origin'), gProj(), gGeoref(),
+    gSimplify({ local: false, errPh: '留空=0.001（归一化）' }),
+  ]),
+  image: () => [gProj()],
+  geojson: () => ([{ name: '转换参数', fields: [
+    F('sourceCrs', 'text', '源 CRS', { ph: 'EPSG:4547 / ENU:lat,lon / WKT / +proj=' }),
+    F('targetCrs', 'text', '目标 CRS', { ph: 'EPSG:4326' }),
+    F('pretty', 'bool', '格式化输出'),
+  ]}]),
+  mesh: () => ([
+    { name: '输出', fields: [
+      F('outputFormat', 'select', '输出格式', { opts: ['glb', 'gltf', 'obj', 'fbx', 'ply'] }),
+      F('coordMode', 'select', '坐标系 -C', { opts: ['', 'original', 'left'] }),
+      F('reorder', 'bool', '重排优化 -r（meshopt 顶点重排）'),
+      F('rebuild', 'bool', '重建优化 -R（加载时重建场景）'),
+      F('@cfg', 'file', '或逐构件简化配置 CSV（-c，按构件正则匹配）', { accept: '.csv,.txt', span: true }),
+    ]},
+    gProj(), gGeoref({ meshOffset: true }), gSimplify({ local: true }),
+  ]),
+  osgb: () => ([
+    { name: 'OSGB', fields: [
+      F('maxLod', 'int', '最大 LOD（可选）', { ph: '留空=自动' }),
+      F('enu', 'vec3', 'ENU 切平面覆盖 --enu（可选，纬度,经度,高）', { subs: ['lat°', 'lon°', 'h m'], span: true }),
+    ]},
+    gOrigin(), gProj(), gGeoref(), gSimplify(),
+  ]),
+};
+const BASIC = {
+  tiles: [
+    { name: '3D Tiles 基础', fields: [
+      F('zUp', 'bool', '输入为 Z-up（-Z，跳过 Y↔Z 翻转）', { span: true }),
+    ]},
+    { name: '分块与 LOD（可选，留空=自动）', fields: [
+      F('rootGeometricError', 'num', '根几何误差 -e (m)', { ph: '留空=按模型包围盒自动' }),
+      F('tileGeometricError', 'num', '瓦片误差 -t (m)', { ph: '留空=自动' }),
+      F('refine', 'select', '细化模式 -r', { opts: ['', 'ADD', 'REPLACE'] }),
+      F('minBlockDistance', 'num', '最小分块距离', { ph: '留空=自动' }),
+      F('maxLod', 'int', '最大 LOD 层级', { ph: '留空=自动' }),
+    ]},
+  ],
+};
+
+/* ================ input area ================ */
+let caps = null;
+function renderInputArea(type) {
+  const area = $('#inputArea'); area.innerHTML = '';
+  if (type === 'osgb') {
+    // 文件夹选择对话框（webkitdirectory）：整目录上传，服务端重建树结构
+    const drop = el('div', { class: 'drop' },
+      el('input', { type: 'file', id: 'osgbDir', webkitdirectory: true, directory: true }),
+      el('div', { class: 'dropInner' },
+        el('span', { class: 'ic' }, '📂'),
+        el('span', { class: 'txt' }, '点击选择 OSGB 文件夹（如 Block_1 或 Data）'),
+        el('span', { class: 'meta', id: 'osgbMeta' }, '')));
+    const fi = drop.querySelector('input');
+    fi.onchange = () => updateOsgbDir(fi);
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault(); drop.classList.remove('drag');
+      const items = [...(e.dataTransfer?.items || [])];
+      // 拖入文件夹：webkitGetAsEntry 展开需要异步 API，这里退化为提示
+      if (items.length) {
+        const anyDir = items.some((it) => it.webkitGetAsEntry?.()?.isDirectory);
+        fi.files = e.dataTransfer.files;
+        fi.dispatchEvent(new Event('change'));
+        if (anyDir) {
+          const meta = $('#osgbMeta');
+          meta.textContent = '已选择（拖拽文件夹仅在本机 Chrome 下可完整展开，建议点击选择）';
+        }
+      }
+    });
+    area.append(label('OSGB 文件夹（浏览器选择并上传）'), drop);
+    area.append(el('div', { class: 'hint' }, '大目录推荐上传顶层 Data 文件夹；超大 OSGB 请改用下方服务器本地路径直读'));
+    // zip 上传（服务端解压）
+    const zdrop = el('div', { class: 'drop', style: 'margin-top:8px' },
+      el('input', { type: 'file', id: 'osgbZip', accept: '.zip' }),
+      el('div', { class: 'dropInner' },
+        el('span', { class: 'ic' }, '🗜'),
+        el('span', { class: 'txt' }, '或上传 ZIP 压缩包（服务端解压，防解压炸弹）'),
+        el('span', { class: 'meta', id: 'osgbZipMeta' }, '')));
+    const zf = zdrop.querySelector('input');
+    zf.onchange = () => {
+      const m = $('#osgbZipMeta');
+      const f = zf.files?.[0];
+      if (f) m.textContent = `${f.name} · ${f.size >= 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB'}`;
+      else m.textContent = '';
+    };
+    area.append(zdrop);
+    if (caps?.features?.localPathInput) {
+      area.append(label('或服务器本地路径（免上传，适合大型 OSGB）'));
+      area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '/data/osgb_root/Data 或 D:\\proj\\Data' }));
+    } else {
+      area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '', hidden: true }));
+    }
+    return;
+  }
+  const drop = el('div', { class: 'drop' },
+    el('input', { type: 'file', id: 'file', accept: fileAccept(type) }),
+    el('div', { class: 'dropInner' },
+      el('span', { class: 'ic' }, '📁'),
+      el('span', { class: 'txt' }, '点击选择或拖拽文件到此处'),
+      el('span', { class: 'meta', id: 'dropMeta' }, '')));
+  const fi = drop.querySelector('input');
+  fi.onchange = () => updateDrop(fi);
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault(); drop.classList.remove('drag');
+    const f = e.dataTransfer.files?.[0];
+    if (f) { try { const dt = new DataTransfer(); dt.items.add(f); fi.files = dt.files; fi.dispatchEvent(new Event('change')); } catch { /* fallback */ } }
+  });
+  area.append(label('输入文件'), drop);
+  if (caps?.features?.localPathInput) {
+    area.append(label('或服务器本地路径（免上传）'));
+    area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '/data/models/x.fbx' }));
+  }
+}
+function updateDrop(fi) {
+  const meta = $('#dropMeta');
+  const f = fi.files?.[0];
+  if (!meta) return;
+  if (!f) { meta.textContent = ''; return; }
+  const kb = f.size >= 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB';
+  meta.textContent = `${f.name} · ${kb}`;
+}
+function updateOsgbDir(fi) {
+  const meta = $('#osgbMeta');
+  if (!meta) return;
+  const files = fi.files ? [...fi.files] : [];
+  if (!files.length) { meta.textContent = ''; return; }
+  const rel = files[0].webkitRelativePath || files[0].name;
+  const top = rel.split('/')[0];
+  const kb = files.reduce((s, f) => s + f.size, 0);
+  const size = kb >= 1048576 ? (kb / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(kb / 1024)) + ' KB';
+  meta.textContent = `${top} · ${files.length} 个文件 · ${size}`;
+}
+const fileAccept = (t) => ({ tiles: '.fbx,.obj,.gltf,.glb,.dae,.3ds,.ply,.stl',
+  mesh: '.fbx,.obj,.gltf,.glb,.dae,.3ds,.ply,.stl', terrain: '.tif,.tiff',
+  image: '.tif,.tiff', geojson: '.geojson,.json' })[t] ?? '';
+
+/* ================ form render / collect ================ */
+function label(s) { return el('label', {}, s); }
+function fieldNode(f) {
+  const id = 'f_' + f.k.replace(/[^a-zA-Z0-9]/g, '_');
+  if (f.t === 'bool') {
+    const cb = el('input', { type: 'checkbox', id, 'data-k': f.k });
+    if (f.def) cb.checked = true;
+    return el('div', { class: 'chk' + (f.span ? ' fspan' : '') }, cb, el('label', { for: id }, f.label));
+  }
+  if (f.t === 'select') {
+    const s = el('select', { id, 'data-k': f.k }, ...f.opts.map(o => el('option', { value: o }, o || '（不指定）')));
+    return el('div', {}, label(f.label), s);
+  }
+  if (f.t === 'num' || f.t === 'int') {
+    const s = el('input', { type: 'number', id, 'data-k': f.k, step: f.t === 'int' ? '1' : 'any', placeholder: f.ph || '' });
+    return el('div', {}, label(f.label), s);
+  }
+  if (f.t === 'text') {
+    const s = el('input', { type: 'text', id, 'data-k': f.k, placeholder: f.ph || '' });
+    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s);
+  }
+  if (f.t === 'area') {
+    const s = el('textarea', { id, 'data-k': f.k, placeholder: f.ph || 'sx,sy,sz,tx,ty,tz\n12345.6,2345678.9,42.0,445000,3260000,0' });
+    return el('div', { class: 'fspan' }, label(f.label), s);
+  }
+  if (f.t === 'file') {
+    const s = el('input', { type: 'file', id, 'data-k': f.k, accept: f.accept || '' });
+    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s);
+  }
+  if (f.t === 'vec3' || f.t === 'seven') {
+    const n = f.t === 'vec3' ? 3 : 7;
+    const subs = f.subs || (f.t === 'vec3' ? ['X', 'Y', 'Z'] : ['mx', 'my', 'mz', 'rx', 'ry', 'rz', 's']);
+    const grid = el('div', { class: 'fgrid' }, ...subs.map((sb, i) =>
+      el('div', {}, label(sb), el('input', { type: 'number', step: 'any', 'data-vec': f.k, 'data-i': i }))));
+    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), grid);
+  }
+  throw new Error('field type? ' + f.t);
+}
+
+function renderForm(type) {
+  const form = $('#paramForm'); form.innerHTML = '';
+  const groups = [...(BASIC[type] || []), ...(UI[type] || [])()];
+  groups.forEach((g, gi) => {
+    const chev = el('span', { class: 'chev' }, '▶');
+    const cnt = el('span', { class: 'cnt' }, gi === 0 ? '核心参数' : '可选');
+    const body = el('div', { class: 'gbody' }, el('div', { class: 'fgrid' }, ...g.fields.map(fieldNode)));
+    form.append(el('details', { class: 'grp', open: gi === 0 || groups.length <= 2 },
+      el('summary', {}, chev, g.name, cnt), body));
+  });
+  for (const inp of form.querySelectorAll('input,select,textarea')) inp.addEventListener('input', syncJson);
+  syncJson();
+}
+
+function getPath(obj, k) { return k.split('.').reduce((o, x) => o?.[x], obj); }
+function setPath(obj, k, v) {
+  const parts = k.split('.'); const last = parts.pop();
+  let o = obj; for (const p of parts) o = o[p] ??= {};
+  o[last] = v;
+}
+
+function collect() {
+  const type = $('#type').value;
+  const params = { type };
+  const files = {};
+  for (const node of $('#paramForm').querySelectorAll('[data-k]')) {
+    const k = node.dataset.k;
+    if (k.startsWith('@')) { if (node.files?.[0]) files[k.slice(1)] = node.files[0]; continue; }
+    if (node.type === 'checkbox') {
+      if (k === 'normals') { if (!node.checked) params.normals = false; continue; }
+      // mesh -L defaults ON in the CLI, so an explicit false opts out;
+      // other types' --lock-border is a bare flag (only forward when checked)
+      if (k === 'lockBorder' && type === 'mesh') { setPath(params, k, node.checked); continue; }
+      if (node.checked) setPath(params, k, true);
+      continue;
+    }
+    const v = node.value.trim();
+    if (!v) continue;
+    if (node.type === 'number') setPath(params, k, Number(v));
+    else if (k === 'georef.fitOrder') setPath(params, k, Number(v));
+    else setPath(params, k, v);
+  }
+  for (const [key, n] of [['origin', 3], ['georef.sevenParameter', 7], ['georef.offset', 3], ['enu', 3]]) {
+    const nodes = [...$('#paramForm').querySelectorAll(`[data-vec="${key}"]`)];
+    if (!nodes.length) continue;
+    const vals = nodes.map(x => x.value.trim());
+    if (vals.every(x => x !== '')) setPath(params, key, vals.map(Number));
+  }
+  return { params, files };
+}
+
+let jsonManual = false;
+function syncJson() {
+  if (jsonManual) return;
+  $('#jsonBox').value = JSON.stringify(collect().params, null, 2);
+}
+$('#jsonGrp').querySelector('summary').addEventListener('click', () => {
+  jsonManual = !jsonManual;
+  $('#jsonBox').readOnly = !jsonManual;
+  $('#jsonModeLabel').textContent = jsonManual ? '手动编辑（提交以此为准）' : '预览（只读）';
+  if (!jsonManual) { try { applyJsonToForm(JSON.parse($('#jsonBox').value)); } catch { /* keep form */ } }
+});
+function applyJsonToForm(p) { // best-effort form fill
+  for (const node of $('#paramForm').querySelectorAll('[data-k]')) {
+    const k = node.dataset.k; if (k.startsWith('@')) continue;
+    const v = getPath(p, k);
+    if (node.type === 'checkbox') node.checked = v === undefined ? (node.id === 'f_normals' ? true : false) : Boolean(v);
+    else node.value = v ?? '';
+  }
+  for (const key of ['origin', 'georef.sevenParameter', 'georef.offset', 'enu']) {
+    const arr = getPath(p, key) || [];
+    [...$('#paramForm').querySelectorAll(`[data-vec="${key}"]`)].forEach((n, i) => n.value = arr[i] ?? '');
+  }
+}
+
+/* ================ job list + SSE ================ */
+const jobs = new Map();
+let es = null;
+const STATUS_CN = { queued: '排队中', running: '运行中', succeeded: '成功', failed: '失败', usage_error: '参数错误', canceled: '已取消' };
+const fmtPct = (j) => {
+  const p = j.progress || {};
+  const w = j.status === 'succeeded' ? 100 : (p.percent || 0);
+  const run = ['queued', 'running'].includes(j.status);
+  return `<div class="bar${run ? ' run' : ''}"><i style="width:${w}%"></i></div>
+    <span class="pct">${w}%${p.total ? ` · ${p.done}/${p.total}${p.phase === 'levels' ? ' 级' : ''}` : ''}</span>`;
+};
+function row(j) {
+  const viewer = j.viewerUrl
+    ? `<a class="btn" href="${esc(j.viewerUrl)}" target="_blank" title="在查看器中打开">查看</a>` : '';
+  const cancel = ['queued', 'running'].includes(j.status) ? `<button class="danger" data-act="cancel" title="取消任务">取消</button>` : '';
+  return `<tr data-id="${j.id}">
+    <td><span class="jobId" data-copy="${j.id}" title="点击复制完整 ID">${j.id.slice(0, 8)}</span><span class="tRel">${fmtAgo(j.createdAt)}</span></td>
+    <td><span class="typeCell"><span class="typeIc">${ICONS[j.type] || ''}</span>${j.type}</span></td>
+    <td><span class="badge s-${j.status}">${STATUS_CN[j.status] || j.status}</span></td>
+    <td>${fmtPct(j)}</td>
+    <td class="c-input"><span class="inName" title="${esc(j.error ? j.error.code + ': ' + j.error.message : j.inputName || '')}">${esc(j.inputName || '')}</span></td>
+    <td><div class="act">${viewer}<button data-act="log" title="查看日志">日志</button>${cancel}<button class="danger" data-act="del" title="删除任务与产物">删除</button></div></td>
+  </tr>`;
+}
+function render() {
+  const arr = [...jobs.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  $('#jobs').innerHTML = arr.length ? arr.map(row).join('')
+    : `<tr><td colspan="6"><div class="empty"><div class="ic">🗂</div><p>还没有处理任务</p>
+        <span class="hint">从左侧选择类型、上传文件后点「提交任务」，进度会实时显示在这里</span></div></td></tr>`;
+  renderStats(arr);
+}
+function renderStats(arr) {
+  const c = { running: 0, queued: 0, succeeded: 0, failed: 0, other: 0 };
+  arr.forEach(j => { if (c[j.status] !== undefined) c[j.status]++; else c.other++; });
+  const s = $('#stats');
+  s.innerHTML = [
+    ['运行中', c.running, 'warn'], ['排队中', c.queued, 'dim'], ['成功', c.succeeded, 'ok'], ['失败', c.failed, 'err'],
+  ].map(([t, n, k]) => `<span class="stat"><b style="color:var(--${k})">${n}</b>${t}</span>`).join('')
+    + `<span class="stat" style="margin-left:auto">共 ${arr.length} 个任务</span>`;
+}
+async function loadJobs() {
+  const r = await fetch('/api/v1/jobs?limit=50');
+  (await r.json()).items.forEach(j => jobs.set(j.id, j));
+  render();
+}
+$('#jobs').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button'); const idEl = e.target.closest('[data-copy]');
+  if (idEl) { await navigator.clipboard?.writeText(idEl.dataset.copy).catch(() => {}); toast('已复制任务 ID', 'info', 1800); return; }
+  if (!btn) return;
+  const id = btn.closest('tr').dataset.id;
+  if (btn.dataset.act === 'cancel') { await fetch(`/api/v1/jobs/${id}/cancel`, { method: 'POST', headers: {} }); toast('已请求取消', 'info'); }
+  if (btn.dataset.act === 'del') { await fetch(`/api/v1/jobs/${id}`, { method: 'DELETE', headers: {} }); jobs.delete(id); toast('任务已删除', 'ok'); }
+  if (btn.dataset.act === 'log') openLog(id);
+  loadJobs();
+});
+$('#refreshBtn').onclick = loadJobs;
+$('#closeLogBtn').onclick = closeLog;
+$('#copyLogBtn').onclick = async () => {
+  const t = $('#logBox').textContent;
+  await navigator.clipboard?.writeText(t).catch(() => {});
+  toast('日志已复制', 'ok', 1800);
+};
+
+async function openLog(id) {
+  $('#logPanel').hidden = false; $('#logJob').textContent = '#' + id.slice(0, 8);
+  $('#logBox').textContent = '';
+  if (es) { es.close(); es = null; }
+  // render history FIRST, then attach EventSource — otherwise a late fetch
+  // callback clobbers live [progress] lines already appended (was a real race)
+  try {
+    const o = await (await fetch(`/api/v1/jobs/${id}/log?tail=120`)).json();
+    $('#logBox').textContent = (o.lines || []).join('\n') + '\n—— 以下为实时事件 ——\n';
+  } catch { $('#logBox').textContent = '—— 实时事件 ——\n'; }
+  scroll();
+  es = new EventSource(`/api/v1/jobs/${id}/events`);
+  es.addEventListener('log', (m) => {
+    const line = JSON.parse(m.data).line;
+    const cls = /\[(?:Progress|Done)\]/.test(line) ? ' t-prog' : (/^Error|错误|warning/i.test(line) ? ' t-err' : '');
+    $('#logBox').append(`<span class="${cls}">${esc(line)}</span>\n`); scroll();
+  });
+  es.addEventListener('progress', (m) => {
+    const d = JSON.parse(m.data);
+    const j = jobs.get(id); if (j) { j.progress = d.data; j.status = 'running'; render(); }
+    $('#logBox').append(`<span class="t-prog">[progress] ${d.data.done}/${d.data.total} (${d.data.percent}%)</span>\n`); scroll();
+  });
+  es.addEventListener('status', (m) => {
+    const d = JSON.parse(m.data); const j = jobs.get(id);
+    if (j) { j.status = d.status; if (d.artifacts) { j.artifacts = d.artifacts; j.viewerUrl = d.viewerUrl; } render(); }
+    $('#logBox').append(`<span class="t-status">[status] ${esc(d.status)}</span>\n`); scroll();
+  });
+}
+function closeLog() { $('#logPanel').hidden = true; if (es) { es.close(); es = null; } }
+const scroll = () => { const b = $('#logBox'); b.scrollTop = b.scrollHeight; };
+
+/* ================ submit ================ */
+$('#submit').onclick = async () => {
+  showMsg('', '');
+  let params;
+  if (jsonManual) {
+    try { params = JSON.parse($('#jsonBox').value); }
+    catch (e) { showMsg('JSON 解析失败: ' + e.message, 'err'); toast('JSON 解析失败', 'err'); return; }
+  } else {
+    const c = collect(); params = c.params;
+  }
+  const type = params.type = $('#type').value;
+  const pathVal = $('#inputPath')?.value.trim() || '';
+  const file = $('#file')?.files?.[0];
+  const osgbFiles = $('#osgbDir')?.files ? [...$('#osgbDir').files] : [];
+  const osgbZip = $('#osgbZip')?.files?.[0] || null;
+  const btn = $('#submit'); btn.disabled = true;
+  const old = btn.textContent; btn.textContent = ''; btn.append(el('span', { class: 'spinner' }), ' 提交中…');
+  let res;
+  try {
+    if (type === 'osgb' && osgbZip && !jsonManual) {
+      // ---- ZIP 上传：服务端解压重建树 ----
+      const fd = new FormData();
+      fd.append('options', JSON.stringify({ ...params, dirName: osgbZip.name.replace(/\.zip$/i, '') || 'osgb' }));
+      fd.append('file', osgbZip, osgbZip.name);
+      res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
+    } else if (type === 'osgb' && osgbFiles.length && !jsonManual) {
+      // ---- 目录上传：逐文件携带相对路径，服务端重建文件夹树 ----
+      const fd = new FormData();
+      const rels = osgbFiles.map((f) => f.webkitRelativePath || f.name);
+      const dirName = (rels[0]?.split('/')[0]) || 'osgb';
+      fd.append('options', JSON.stringify({ ...params, relPaths: rels, dirName }));
+      osgbFiles.forEach((f, i) => fd.append('file', f, `f_${String(i + 1).padStart(6, '0')}`));
+      const prj = $('#paramForm').querySelector('[data-k="@prj"]')?.files?.[0];
+      const cps = $('#paramForm').querySelector('[data-k="@cps"]')?.files?.[0];
+      if (prj) fd.append('prj', prj, prj.name);
+      if (cps) fd.append('cps', cps, cps.name);
+      res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
+    } else if (file && !jsonManual) {
+      const fd = new FormData();
+      fd.append('options', JSON.stringify(params));
+      fd.append('file', file, file.name);
+      const prj = $('#paramForm').querySelector('[data-k="@prj"]')?.files?.[0];
+      const cps = $('#paramForm').querySelector('[data-k="@cps"]')?.files?.[0];
+      const cfg = $('#paramForm').querySelector('[data-k="@cfg"]')?.files?.[0];
+      if (prj) fd.append('prj', prj, prj.name);
+      if (cps) fd.append('cps', cps, cps.name);
+      if (cfg) fd.append('cfg', cfg, cfg.name);
+      res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
+    } else if (pathVal || !file) {
+      if (type !== 'osgb' && !pathVal && !file) { showMsg('请选择输入文件或服务器本地路径', 'err'); return; }
+      if (type === 'osgb' && !pathVal && !osgbFiles.length) { showMsg('请选择 OSGB 文件夹（或填写服务器本地路径）', 'err'); return; }
+      res = await fetch('/api/v1/jobs', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...params, inputPath: pathVal }) });
+    } else {
+      showMsg('JSON 模式下仅支持服务器本地路径输入（inputPath）', 'err');
+      return;
+    }
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const txt = body?.error
+        ? `${body.error.code}: ${body.error.message}` + (body.error.details ? '\n' + JSON.stringify(body.error.details) : '')
+        : `提交失败 (HTTP ${res.status})`;
+      showMsg(txt, 'err');
+      toast(`提交失败：${body?.error?.message || 'HTTP ' + res.status}`, 'err', 5000);
+      return;
+    }
+    jobs.set(body.id, body); render(); openLog(body.id);
+    showMsg(`任务已提交：${body.id.slice(0, 8)}`, 'ok');
+    toast('任务已提交，正在处理…', 'ok');
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+};
+
+/* ================ init ================ */
+$('#type').append(...['tiles', 'terrain', 'image', 'geojson', 'mesh', 'osgb']
+  .map(t => el('option', { value: t }, `${ICONS[t]} ${t}`)));
+$('#type').onchange = () => {
+  const t = $('#type').value;
+  $('#typeDesc').textContent = DESC[t];
+  renderInputArea(t); renderForm(t);
+};
+try {
+  caps = await (await fetch('/api/v1/capabilities')).json();
+  const pill = $('#health');
+  pill.classList.add('online');
+  pill.innerHTML = `<i></i><span class="hide-sm">在线 · </span><span>${caps.jobTypes.join(' / ')}${caps.features.osgb ? '' : '（无 osgb）'}</span>`;
+  if (!caps.features.osgb) $('#type').querySelector('[value=osgb]')?.remove();
+  if (caps.client?.canManageWhitelist) $('#wlLink').style.display = '';
+  ipNote();
+} catch {
+  const pill = $('#health');
+  pill.classList.add('offline');
+  pill.innerHTML = '<i></i><span>服务不可达</span>';
+}
+$('#type').value = 'tiles';
+$('#type').onchange();
+await loadJobs();
+setInterval(() => { if ($('#logPanel').hidden) loadJobs(); }, 5000);
+</script>
+</body>
+</html>

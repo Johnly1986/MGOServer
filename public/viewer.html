@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MGO Cesium 查看器</title>
+<style>
+  :root { --acc:#4da3ff; --fg:#e6ecf5; --dim:#93a0b4; --dim2:#6b7889; }
+  * { box-sizing:border-box; }
+  html, body, #cesiumContainer { width:100%; height:100%; margin:0; overflow:hidden; background:#000; }
+  body { font:13px/1.6 "PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif; color:var(--fg); }
+
+  /* ---------- boot overlay ---------- */
+  #boot { position:fixed; inset:0; z-index:500; display:flex; flex-direction:column; gap:14px;
+          align-items:center; justify-content:center; background:radial-gradient(900px 500px at 50% 30%, #16202e, #0b0e13);
+          color:var(--dim); font-size:13px; transition:opacity .4s; }
+  #boot.off { opacity:0; pointer-events:none; }
+  .ring { width:42px; height:42px; border-radius:50%; border:3px solid rgba(77,163,255,.18);
+          border-top-color:var(--acc); animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ---------- HUD ---------- */
+  #hud { position:absolute; top:12px; left:12px; z-index:200; width:min(400px, calc(100vw - 24px));
+         background:rgba(15,19,26,.82); backdrop-filter:blur(14px) saturate(1.2);
+         -webkit-backdrop-filter:blur(14px) saturate(1.2);
+         color:var(--fg); padding:14px 16px; border-radius:14px;
+         border:1px solid rgba(255,255,255,.08); box-shadow:0 10px 34px rgba(0,0,0,.45);
+         max-height:calc(100vh - 24px); overflow:auto; }
+  #hud h3 { margin:0 0 10px; font-size:14px; display:flex; align-items:center; gap:8px; }
+  #hud h3 .dot { width:8px; height:8px; border-radius:50%; background:var(--acc);
+                 box-shadow:0 0 8px var(--acc); }
+  #hud .sec { margin-top:12px; }
+  #hud .sec > b { display:block; font-size:11.5px; letter-spacing:.6px; color:var(--dim2);
+                  margin-bottom:6px; font-weight:600; }
+  #hud a { color:var(--acc); text-decoration:none; } #hud a:hover { text-decoration:underline; }
+
+  #hud input, #hud select { width:100%; background:rgba(10,13,18,.7); color:var(--fg);
+                            border:1px solid rgba(255,255,255,.12); border-radius:8px;
+                            padding:7px 9px; font:12px ui-monospace,Consolas,monospace; margin:3px 0; }
+  #hud select { appearance:none; -webkit-appearance:none; padding-right:26px; cursor:pointer;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2393a0b4' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat; background-position:right 9px center; }
+  #hud input:focus, #hud select:focus { outline:none; border-color:var(--acc);
+    box-shadow:0 0 0 3px rgba(77,163,255,.18); }
+
+  #hud .row { display:flex; gap:7px; margin-top:7px; }
+  #hud .row > * { flex:1; }
+  #hud button { background:linear-gradient(135deg,var(--acc) 0%,#1b6fd6 100%); color:#fff;
+                border:none; border-radius:8px; padding:8px 10px; font-weight:600; font-size:12.5px;
+                cursor:pointer; margin:0; transition:filter .15s; }
+  #hud button:hover { filter:brightness(1.15); }
+  #hud button.ghost { background:transparent; color:var(--dim); border:1px solid rgba(255,255,255,.14);
+                      font-weight:500; }
+  #hud button.ghost:hover { color:var(--acc); border-color:var(--acc); }
+  #hud button.danger { background:transparent; color:#ff8d96; border:1px solid rgba(239,91,104,.4); font-weight:500; }
+  #hud button.danger:hover { background:rgba(239,91,104,.14); }
+
+  /* layer list */
+  #layerList { list-style:none; margin:0; padding:0; }
+  #layerList li { display:flex; align-items:center; gap:8px; padding:7px 9px; margin-bottom:5px;
+                  border-radius:8px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.07);
+                  cursor:pointer; font-size:12.5px; transition:.15s; }
+  #layerList li:hover { border-color:var(--acc); background:rgba(77,163,255,.08); }
+  #layerList li .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #layerList li .tag2 { margin-left:auto; font-size:10.5px; color:var(--dim2);
+                        font-family:ui-monospace,Consolas,monospace; }
+  #layerList li .rm { margin-left:6px; color:var(--dim2); padding:1px 6px; border-radius:6px; font-size:12px; }
+  #layerList li .rm:hover { color:var(--err); background:rgba(239,91,104,.15); }
+
+  #status { color:var(--dim); font-size:12px; margin-top:9px; min-height:16px;
+            white-space:pre-wrap; word-break:break-all; }
+  #status.ok { color:var(--acc); }
+  #status.err { color:#ff8d96; }
+
+  /* ---------- top-right toolbar ---------- */
+  #toolbar { position:absolute; top:12px; right:12px; z-index:201; display:flex; gap:8px; }
+  #toolbar button { width:38px; height:38px; border-radius:10px; border:1px solid rgba(255,255,255,.1);
+                    background:rgba(15,19,26,.78); backdrop-filter:blur(12px); color:var(--fg);
+                    font-size:15px; cursor:pointer; transition:.15s; display:grid; place-items:center; }
+  #toolbar button:hover { border-color:var(--acc); color:var(--acc); background:rgba(77,163,255,.12); }
+  #hudToggle { display:none; }
+  @media (max-width:640px) {
+    #hud { left:10px; right:10px; top:58px; width:auto; font-size:14px; }
+    #hud.collapsed { display:none; }
+    #hudToggle { display:grid; }
+    #hud button { padding:11px 12px; }
+  }
+
+  /* ---------- bottom readouts ---------- */
+  #bar { position:absolute; left:12px; bottom:12px; z-index:200; display:flex; gap:8px; align-items:center;
+         background:rgba(15,19,26,.72); backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.08);
+         border-radius:9px; padding:6px 12px; font-size:11.5px; color:var(--dim); }
+  #bar .n { color:var(--acc); font-weight:600; font-variant-numeric:tabular-nums; }
+  #coord { position:absolute; right:12px; bottom:12px; z-index:200; background:rgba(15,19,26,.72);
+           backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.08); border-radius:9px;
+           padding:6px 12px; font:11px ui-monospace,Consolas,monospace; color:var(--dim);
+           font-variant-numeric:tabular-nums; }
+  @media (max-width:640px) { #bar { display:none; } #coord { left:10px; right:10px; bottom:8px; text-align:center; } }
+
+  .credit { margin-top:10px; padding-top:9px; border-top:1px solid rgba(255,255,255,.07);
+            color:var(--dim2); font-size:11px; display:flex; gap:10px; }
+  .credit b { color:var(--dim); font-weight:500; }
+</style>
+</head>
+<body>
+<div id="cesiumContainer"></div>
+
+<div id="boot"><div class="ring"></div><div id="bootText">正在加载 Cesium 引擎…</div></div>
+
+<div id="toolbar">
+  <button id="hudToggle" title="显示/隐藏面板">☰</button>
+  <button id="home" title="复位视角 (H)">⌂</button>
+  <button id="shot" title="保存截图 (PNG)">📷</button>
+  <button id="fs" title="全屏">⛶</button>
+</div>
+
+<div id="hud">
+  <h3><span class="dot"></span>MGO 查看器
+    <span style="margin-left:auto;font-size:11.5px;font-weight:400"><a href="/console.html">控制台 ↗</a></span>
+  </h3>
+
+  <div id="layerWrap" class="sec" style="display:none">
+    <b>已加载图层（点击图层飞到目标）</b>
+    <ul id="layerList"></ul>
+  </div>
+
+  <div class="sec">
+    <b>底图影像（免费在线源，可关闭）</b>
+    <select id="basemap">
+      <option value="esri_img">🛰 卫星影像 (Esri)</option>
+      <option value="esri_street">🗺 街道地图 (Esri)</option>
+      <option value="osm">🧭 OSM 标准地图</option>
+      <option value="carto_dark">🌙 Carto 深色</option>
+      <option value="carto_light">☀️ Carto 浅色</option>
+      <option value="topo">⛰ OpenTopoMap 地形</option>
+      <option value="none">无底图（纯色地球）</option>
+    </select>
+  </div>
+
+  <div class="sec">
+    <b>加载产物</b>
+    <div class="row">
+      <select id="type">
+        <option value="3dtiles">3D Tiles (tileset.json)</option>
+        <option value="terrain">Quantized-Mesh 地形 (out 目录)</option>
+        <option value="imagery">TMS 影像 (out 目录)</option>
+        <option value="geojson">GeoJSON</option>
+        <option value="model">glTF 模型 (.glb)</option>
+      </select>
+    </div>
+    <input id="asset" placeholder="/ws/&lt;jobId&gt;/out/tileset.json">
+    <div class="row">
+      <button id="load">加载图层</button>
+      <button id="fit" class="ghost">飞到结果</button>
+      <button id="clear" class="danger">清空</button>
+    </div>
+  </div>
+
+  <div id="status">初始化中…</div>
+
+  <div class="credit">
+    <span><b>左键</b>旋转</span><span><b>滚轮</b>缩放</span><span><b>右键</b>平移</span>
+    <span id="credit" style="margin-left:auto;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+  </div>
+</div>
+
+<div id="bar">已加载图层 <span class="n" id="layerCount">0</span></div>
+<div id="coord"></div>
+
+<script>
+// HUD 外壳行为（收起/展开）不依赖 Cesium 引擎加载，页面一就绪即可用
+(function () {
+  const hud = document.getElementById('hud');
+  const toggle = document.getElementById('hudToggle');
+  if (!hud || !toggle) return;
+  const init = () => { if (innerWidth <= 640) hud.classList.add('collapsed'); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+  toggle.addEventListener('click', () => hud.classList.toggle('collapsed'));
+})();
+</script>
+
+<script type="module">
+/**
+ * Cesium base: prefer self-hosted /cesium/ (design §9.1, pinned 1.111),
+ * fall back to the official 1.111 CDN when not synced yet.
+ */
+async function cesiumBaseUrl() {
+  try {
+    const r = await fetch('/cesium/Cesium.js', { method: 'HEAD' });
+    if (r.ok) return '/cesium/';
+  } catch { /* offline env without sync → CDN */ }
+  return 'https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/';
+}
+
+function loadScript(src) { return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('failed ' + src)); document.head.append(s); }); }
+function loadCss(href) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.append(l); }
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const bootText = $('#bootText');
+const base = await cesiumBaseUrl();
+bootText.textContent = `正在加载 Cesium 引擎（${base.includes('cesium.com') ? 'CDN' : '自托管'}）…`;
+loadCss(base + 'Widgets/widgets.css');
+await loadScript(base + 'Cesium.js');
+const Cesium = window.Cesium;
+$('#boot').classList.add('off');
+
+/**
+ * No ion token / no external services: bare ellipsoid globe. MGO products
+ * (terrain / imagery / tiles / geojson) are what this viewer is for.
+ */
+const viewer = new Cesium.Viewer('cesiumContainer', {
+  baseLayer: false,
+  baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
+  navigationHelpButton: false, animation: false, timeline: false, fullscreenButton: false,
+  infoBox: false, selectionIndicator: false,
+  terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+});
+viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#1d2733');
+viewer.scene.globe.showGroundAtmosphere = false;
+setStatus(`Cesium ${Cesium.VERSION} 就绪`, 'ok');
+
+function setStatus(text, kind = '') {
+  const s = $('#status');
+  s.textContent = text;
+  s.className = kind;
+}
+
+// ---------------- free online base imagery (no ion token needed) ----------------
+// All sources are CORS-enabled XYZ Web-Mercator tile servers with free public
+// terms (attribution required — shown in the HUD credit row).
+const BASE_MAPS = {
+  esri_img: {
+    label: '🛰 卫星影像 (Esri)',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    max: 19,
+    credit: '影像 © Esri, Maxar, Earthstar Geographics, 及 GIS 用户社区',
+  },
+  esri_street: {
+    label: '🗺 街道地图 (Esri)',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    max: 19,
+    credit: '© Esri, HERE, Garmin, Foursquare, OpenStreetMap 贡献者',
+  },
+  osm: {
+    label: '🧭 OSM 标准地图',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    max: 19,
+    credit: '© OpenStreetMap 贡献者 (ODbL)',
+  },
+  carto_dark: {
+    label: '🌙 Carto 深色',
+    url: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+    max: 20,
+    credit: '© OpenStreetMap 贡献者 © CARTO',
+  },
+  carto_light: {
+    label: '☀️ Carto 浅色',
+    url: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+    max: 20,
+    credit: '© OpenStreetMap 贡献者 © CARTO',
+  },
+  topo: {
+    label: '⛰ OpenTopoMap 地形',
+    url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
+    max: 17,
+    credit: '© OpenStreetMap 贡献者 (ODbL)；高程 SRTM/ASTER',
+  },
+};
+let baseLayer = null;   // current base imagery layer (or null = plain globe)
+
+/** Sun-lighting pass is only useful on the plain globe (terrain relief);
+ *  when a base imagery layer is active the imagery carries its own shading,
+ *  so lighting is switched off to keep tiles bright. */
+function syncLighting() {
+  const hasTerrain = layers.some((l) => l.type === 'terrain');
+  viewer.scene.globe.enableLighting = !baseLayer && hasTerrain;
+  if (!baseLayer) {
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString(hasTerrain ? '#3a4a5e' : '#1d2733');
+  }
+}
+
+function setBaseMap(key) {
+  if (baseLayer) { viewer.imageryLayers.remove(baseLayer, true); baseLayer = null; }
+  const src = BASE_MAPS[key];
+  $('#credit').textContent = '';
+  if (!src) {
+    syncLighting();
+    setStatus('底图：无（纯色地球）');
+    return;
+  }
+  const provider = new Cesium.UrlTemplateImageryProvider({
+    url: src.url,
+    tilingScheme: new Cesium.WebMercatorTilingScheme(),
+    maximumLevel: src.max,
+  });
+  baseLayer = viewer.imageryLayers.addImageryProvider(provider);
+  syncLighting();
+  $('#credit').textContent = src.credit;
+  setStatus(`底图：${src.label}`);
+}
+$('#basemap').addEventListener('change', () => setBaseMap($('#basemap').value));
+
+// ---------------- loaders (design §9.2) ----------------
+const q0 = new URLSearchParams(location.search);
+const layers = [];
+const LOADERS = {
+  '3dtiles': async (url) => {
+    const ts = await Cesium.Cesium3DTileset.fromUrl(url, {
+      // MGO emits a correct root transform (ENU->ECEF).  Per §9.3 the viewer
+      // must NOT wrap it in any additional axis-correction matrix.
+    });
+    viewer.scene.primitives.add(ts);
+    return { name: '3D Tiles', obj: ts, fit: () => viewer.zoomTo(ts) };
+  },
+  'terrain': async (url) => {
+    const dir = url.replace(/\/+$/, '');
+    const tp = await Cesium.CesiumTerrainProvider.fromUrl(dir, {
+      requestVertexNormals: true,   // MGO encodes OctVertexNormals by default
+      requestWaterMask: false,
+    });
+    viewer.scene.terrainProvider = tp;
+    // Camera target: MGO's layer.json carries private-calibrated fields —
+    // `bounds` [w,s,e,n] degrees + `available` level ranges (intentionally no
+    // standard `availability`; see TerrainLayerJson.cpp 1.111 calibration).
+    // NOTE: Rectangle.scale() multiplies radian coords — NOT a center zoom.
+    let rect = null;
+    try {
+      const meta = await (await fetch(dir + '/layer.json')).json();
+      if (Array.isArray(meta.bounds) && meta.bounds.length === 4) {
+        const [w, s, e, n] = meta.bounds.map(Number);
+        const padLon = Math.max((e - w) * 0.6, 0.004);
+        const padLat = Math.max((n - s) * 0.6, 0.004);
+        rect = Cesium.Rectangle.fromDegrees(w - padLon, s - padLat, e + padLon, n + padLat);
+      }
+    } catch { /* layer.json unreadable → stay put */ }
+    // Bare ellipsoid (no base imagery) renders terrain as one flat baseColor —
+    // relief would be literally invisible. Sun-lighting + low-sun clock makes
+    // the mesh readable without any external imagery service.
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    if (rect) {
+      const lonDeg = Cesium.Math.toDegrees((rect.west + rect.east) / 2);
+      const d = new Date();
+      d.setUTCHours(((((Math.round(8 - lonDeg / 15) % 24) + 24) % 24)), 0, 0, 0);
+      viewer.clock.currentTime = Cesium.JulianDate.fromDate(d);
+    }
+    syncLighting();
+    return { name: 'Quantized-Mesh 地形', obj: tp, fit: () => {
+      if (rect) viewer.camera.flyTo({ destination: rect, duration: 1.6 });
+    } };
+  },
+  'imagery': async (url) => {
+    // MGO DOM out/ ships tilemapresource.xml; accept dir or explicit xml URL
+    const u = url.endsWith('.xml') ? url : url.replace(/\/+$/, '') + '/tilemapresource.xml';
+    let ip;
+    try { ip = await Cesium.TileMapServiceImageryProvider.fromUrl(u); }
+    catch {
+      ip = new Cesium.UrlTemplateImageryProvider({ url: url.replace(/\/$/, '') + '/{z}/{x}/{y}.png', tilingScheme: new Cesium.WebMercatorTilingScheme(), maximumLevel: 25 });
+    }
+    const l = viewer.imageryLayers.addImageryProvider(ip);
+    return { name: 'TMS 影像', obj: l, layer: true, fit: () => viewer.camera.flyTo({ destination: ip.rectangle }) };
+  },
+  'geojson': async (url) => {
+    const ds = await Cesium.GeoJsonDataSource.load(url, { stroke: Cesium.Color.DEEPSKYBLUE, fill: Cesium.Color.DEEPSKYBLUE.withAlpha(0.3), strokeWidth: 3, clampToGround: true });
+    viewer.dataSources.add(ds);
+    return { name: 'GeoJSON', obj: ds, fit: () => viewer.zoomTo(ds) };
+  },
+  'model': async (url) => {
+    // Local-model preview placement (mesh jobs are not georeferenced):
+    // default spot near Hangzhou; override via ?lon=&lat= in the URL.
+    const lon = Number(q0.get('lon')) || 120.0, lat = Number(q0.get('lat')) || 30.0;
+    const e = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, 50),
+      model: { uri: url, scale: 1 },
+    });
+    viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat, 1500), duration: 1 });
+    return { name: 'glTF 模型（预览）', obj: e, fit: () => viewer.flyTo(e) };
+  },
+};
+
+async function addLayer(type, url) {
+  if (!url) return;
+  setStatus(`加载 ${type} …`);
+  try {
+    const L = await LOADERS[type](url);
+    L.url = url; L.type = type;
+    layers.push(L);
+    renderList();
+    await L.fit?.();
+    setStatus(`已加载: ${L.name}`, 'ok');
+    updateBar();
+  } catch (e) {
+    console.error(e);
+    setStatus(`加载失败 (${type}): ${e.message}`, 'err');
+  }
+}
+
+function renderList() {
+  const wrap = $('#layerWrap');
+  wrap.style.display = layers.length ? '' : 'none';
+  $('#layerList').innerHTML = layers.map((l, i) =>
+    `<li data-i="${i}" title="点击飞到：${esc(l.url)}">
+       <span class="nm">${esc(l.name)}</span>
+       <span class="tag2">${l.type}</span>
+       <span class="rm" data-rm="${i}" title="移除图层">✕</span>
+     </li>`).join('');
+  updateBar();
+}
+function updateBar() { $('#layerCount').textContent = layers.length; }
+
+function removeLayer(i) {
+  const l = layers[i];
+  if (l.type === 'terrain') {
+    viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+    viewer.scene.globe.depthTestAgainstTerrain = false;
+  }
+  else if (l.layer) viewer.imageryLayers.remove(l.obj, true);
+  else if (l.obj && viewer.dataSources.contains(l.obj)) viewer.dataSources.remove(l.obj, true);
+  else if (l.obj) { viewer.scene.primitives.remove(l.obj); viewer.entities.remove(l.obj); }
+  layers.splice(i, 1);
+  syncLighting();
+  renderList();
+}
+
+$('#layerList').addEventListener('click', (e) => {
+  const rm = e.target?.closest?.('[data-rm]');
+  if (rm) { removeLayer(Number(rm.dataset.rm)); return; }
+  const i = e.target?.closest?.('li')?.dataset?.i;
+  if (i !== undefined) layers[i]?.fit?.();
+});
+
+$('#load').onclick = () => addLayer($('#type').value, $('#asset').value.trim());
+$('#fit').onclick = () => layers.at(-1)?.fit?.();
+$('#clear').onclick = () => { while (layers.length) removeLayer(0); setStatus('已清空全部图层'); };
+
+/* screenshot: grab the drawing buffer inside postRender (before the
+   compositor clears it — this is why toDataURL in a click handler fails).
+   Retry across a few frames: headless/GPU timing can yield empty buffers. */
+$('#shot').onclick = () => {
+  let tries = 0;
+  const grab = () => {
+    tries++;
+    let url = null;
+    try { url = viewer.scene.canvas.toDataURL('image/png'); } catch { /* buffer unavailable this frame */ }
+    if (url && url.length > 1500) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mgo-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+      a.click();
+      setStatus('已保存截图', 'ok');
+      viewer.scene.postRender.removeEventListener(grab);
+      return;
+    }
+    if (tries >= 40) {
+      setStatus('截图失败：未能取得帧缓冲', 'err');
+      viewer.scene.postRender.removeEventListener(grab);
+    }
+  };
+  viewer.scene.postRender.addEventListener(grab);
+  viewer.scene.requestRender();
+};
+$('#home').onclick = () => { viewer.camera.flyHome(1.5); setStatus('已复位视角', 'ok'); };
+$('#fs').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen?.();
+  else document.documentElement.requestFullscreen?.();
+};
+
+/* coordinate readout */
+viewer.screenSpaceEventHandler.setInputAction((movement) => {
+  const c = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+  if (!c) { $('#coord').textContent = ''; return; }
+  const g = Cesium.Cartographic.fromCartesian(c);
+  const lon = Cesium.Math.toDegrees(g.longitude), lat = Cesium.Math.toDegrees(g.latitude);
+  $('#coord').textContent = `经度 ${lon.toFixed(5)}°  纬度 ${lat.toFixed(5)}°`;
+}, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+/* keyboard shortcuts (skip while typing) */
+document.addEventListener('keydown', (e) => {
+  if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  if (e.key === 'f' || e.key === 'F') layers.at(-1)?.fit?.();
+  if (e.key === 'h' || e.key === 'H') $('#home').click();
+  if (e.key === 'c' || e.key === 'C') $('#clear').click();
+});
+
+// ---------------- deep link: /viewer.html?asset=&type=&basemap= ----------------
+const q = new URLSearchParams(location.search);
+setBaseMap(q.get('basemap') || 'esri_img');   // free online imagery by default
+if (q.get('asset')) {
+  $('#type').value = q.get('type') || '3dtiles';
+  $('#asset').value = q.get('asset');
+  addLayer($('#type').value, q.get('asset'));
+} else {
+  // no asset → offer succeeded jobs
+  fetch('/api/v1/jobs?status=succeeded&limit=20').then(r => r.json()).then(({ items }) => {
+    if (!items?.length) return;
+    setStatus('提示：从任务列表点「查看」，或选择下方近期任务：');
+    const sel = document.createElement('select');
+    sel.innerHTML = '<option value="">— 近期成功任务 —</option>' + items.map(j =>
+      (j.artifacts || []).filter(a => a.viewer).map(a =>
+        `<option value="${a.viewer.type}|${a.viewer.url}" data-id="${j.id}">${j.type} ${j.id.slice(0,8)} · ${a.role}</option>`)
+        .join('')).join('');
+    sel.onchange = () => { if (!sel.value) return; const [t, u] = sel.value.split('|'); $('#type').value = t; $('#asset').value = u; addLayer(t, u); };
+    $('#hud').insertBefore(sel, $('#status'));
+  }).catch(() => {});
+}
+</script>
+</body>
+</html>

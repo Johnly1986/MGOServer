@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IP 白名单设置 · MGO</title>
+<style>
+  :root { --bg:#0e1116; --bg2:#12161d; --panel:#171c24; --panel2:#1c222c;
+          --line:#242c38; --line2:#2d3744; --fg:#e6ecf5; --dim:#93a0b4; --dim2:#6b7889;
+          --acc:#4da3ff; --ok:#3ecf6e; --err:#ef5b68; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.6 "PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+         background:radial-gradient(1100px 500px at 70% -10%, #16202e 0%, var(--bg) 55%) fixed, var(--bg);
+         color:var(--fg); min-height:100vh; }
+  .wrap { max-width:720px; margin:0 auto; padding:28px 20px 60px; }
+  header { display:flex; align-items:center; gap:12px; margin-bottom:18px; }
+  .logo { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,var(--acc),#1b6fd6);
+          display:grid; place-items:center; color:#fff; font-weight:800; }
+  h1 { font-size:18px; margin:0; }
+  .sub { color:var(--dim2); font-size:12px; margin-left:auto; }
+  a { color:var(--acc); text-decoration:none; } a:hover { text-decoration:underline; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+           box-shadow:0 8px 24px rgba(0,0,0,.35); padding:18px 20px; margin-bottom:14px; }
+  .panel h2 { margin:0 0 8px; font-size:14.5px; }
+  .hint { color:var(--dim2); font-size:12px; margin:6px 0 10px; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:11.5px;
+           background:#242d3a; margin-left:8px; vertical-align:2px; }
+  .badge.ok { color:var(--ok); border:1px solid rgba(62,207,110,.35); }
+  .badge.err { color:var(--err); border:1px solid rgba(239,91,104,.4); }
+  ul#list { list-style:none; margin:8px 0; padding:0; }
+  ul#list li { display:flex; align-items:center; gap:10px; padding:8px 10px; margin-bottom:6px;
+               border-radius:8px; background:var(--bg2); border:1px solid var(--line); font-family:ui-monospace,Consolas,monospace; }
+  ul#list li .rm { margin-left:auto; cursor:pointer; color:var(--dim2); padding:2px 9px; border-radius:6px; font-size:12px; }
+  ul#list li .rm:hover { color:var(--err); background:rgba(239,91,104,.14); }
+  ul#list li.locked { color:var(--dim2); }
+  ul#list li .tag { font-size:10.5px; color:var(--ok); border:1px solid rgba(62,207,110,.3);
+                    border-radius:5px; padding:0 6px; margin-left:8px; }
+  .row { display:flex; gap:8px; margin-top:10px; }
+  input { flex:1; background:var(--bg2); color:var(--fg); border:1px solid var(--line2);
+          border-radius:8px; padding:9px 11px; font:13px ui-monospace,Consolas,monospace; }
+  input:focus { outline:none; border-color:var(--acc); box-shadow:0 0 0 3px rgba(77,163,255,.18); }
+  button { background:linear-gradient(135deg,var(--acc),#1b6fd6); color:#fff; border:none;
+           border-radius:8px; padding:9px 16px; font-weight:600; cursor:pointer; transition:filter .15s; }
+  button:hover { filter:brightness(1.12); }
+  button.ghost { background:transparent; color:var(--dim); border:1px solid var(--line2); font-weight:500; }
+  button.ghost:hover { color:var(--acc); border-color:var(--acc); }
+  #msg { margin-top:10px; font-size:12.5px; min-height:16px; white-space:pre-wrap; }
+  #msg.err { color:var(--err); } #msg.ok { color:var(--ok); }
+  .mono { font-family:ui-monospace,Consolas,monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">M</div>
+    <h1>IP 白名单设置</h1>
+    <span class="sub"><a href="/console.html">← 返回控制台</a></span>
+  </header>
+
+  <div class="panel">
+    <h2>当前访问状态 <span class="badge" id="stateBadge">检查中…</span></h2>
+    <div class="hint" id="stateText">…</div>
+  </div>
+
+  <div class="panel">
+    <h2>白名单条目 <span class="badge" id="count"></span></h2>
+    <div class="hint">允许的客户端 IP 或 CIDR（如 <span class="mono">114.114.114.114</span>、<span class="mono">10.0.0.0/8</span>）。
+      本机（127.0.0.1 / ::1）恒在白名单、不可移除。修改仅本机可执行，保存即热生效并持久化。</div>
+    <ul id="list"></ul>
+    <div class="row">
+      <input id="entry" placeholder="输入 IP 或 CIDR，回车添加" spellcheck="false">
+      <button id="addBtn">＋ 添加</button>
+    </div>
+    <div class="row" style="justify-content:flex-end">
+      <button class="ghost" id="resetBtn">恢复默认（仅本机）</button>
+      <button id="saveBtn">💾 保存并应用</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+</div>
+
+<script type="module">
+const $ = (s) => document.querySelector(s);
+let local = false;           // 是否本机（可管理）
+let items = [];              // 当前编辑条目（不含恒允许的本机）
+
+async function load() {
+  const r = await fetch('/api/v1/capabilities');
+  const caps = await r.json().catch(() => null);
+  local = caps?.client?.canManageWhitelist === true;
+  const allowed = caps?.client?.allowed === true;
+  const ip = caps?.client?.ip ?? '?';
+  const st = $('#stateText');
+  if (!caps) { $('#stateBadge').textContent = '离线'; $('#stateBadge').className = 'badge err'; st.textContent = '无法连接服务。'; return; }
+  $('#stateBadge').textContent = allowed ? `已授权（${ip}）` : `未授权（${ip}）`;
+  $('#stateBadge').className = 'badge ' + (allowed ? 'ok' : 'err');
+  if (!local) {
+    st.innerHTML = `当前 IP <b class="mono">${ip}</b> 不是本机（127.0.0.1/::1）——本页只读预览，白名单修改仅限本机执行。`;
+  } else {
+    st.innerHTML = `本机访问 ✓ 可查看并修改白名单，保存后立即生效并写入 <span class="mono">workspace/whitelist.json</span>。`;
+  }
+  if (!local) {
+    $('#addBtn').disabled = $('#saveBtn').disabled = $('#resetBtn').disabled = true;
+    $('#entry').disabled = true;
+  }
+  const w = await (await fetch('/api/v1/whitelist')).json();
+  items = (w.whitelist || []).filter((e) => !['127.0.0.1', '::1'].includes(e));
+  render();
+}
+
+function render() {
+  $('#count').textContent = `${items.length} 条`;
+  $('#list').innerHTML = [
+    '<li class="locked">127.0.0.1<span class="tag">本机·恒允许</span></li>',
+    '<li class="locked">::1<span class="tag">本机·恒允许</span></li>',
+    ...items.map((e, i) => `<li>${e}<span class="rm" data-i="${i}" title="移除">✕</span></li>`),
+  ].join('');
+}
+
+$('#list').addEventListener('click', (e) => {
+  const rm = e.target?.closest?.('.rm');
+  if (rm && local) { items.splice(Number(rm.dataset.i), 1); render(); }
+});
+$('#addBtn').onclick = addEntry;
+$('#entry').addEventListener('keydown', (e) => { if (e.key === 'Enter') addEntry(); });
+function addEntry() {
+  const v = $('#entry').value.trim();
+  if (!v) return;
+  if (!/^[\w.:\/\[\]]+$/.test(v) || !/\d|:/.test(v)) {
+    show('格式无效：请输入 IP 或 CIDR（如 114.114.114.114 或 10.0.0.0/8）', 'err'); return;
+  }
+  if (!items.includes(v)) items.push(v);
+  $('#entry').value = '';
+  render();
+}
+$('#saveBtn').onclick = async () => {
+  const r = await fetch('/api/v1/whitelist', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ whitelist: items }),
+  });
+  const b = await r.json().catch(() => null);
+  if (!r.ok) { show(`保存失败：${b?.error?.message || r.status}`, 'err'); return; }
+  items = (b.whitelist || []).filter((e) => !['127.0.0.1', '::1'].includes(e));
+  render();
+  show('✓ 已保存并生效', 'ok');
+};
+$('#resetBtn').onclick = async () => {
+  const r = await fetch('/api/v1/whitelist', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ whitelist: [] }),
+  });
+  const b = await r.json().catch(() => null);
+  if (!r.ok) { show(`重置失败：${b?.error?.message || r.status}`, 'err'); return; }
+  items = [];
+  render();
+  show('✓ 已恢复默认（仅本机）', 'ok');
+};
+function show(t, k) { const m = $('#msg'); m.textContent = t; m.className = k; }
+
+load();
+</script>
+</body>
+</html>

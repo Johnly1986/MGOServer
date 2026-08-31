@@ -1,0 +1,41 @@
+# MGOServer — systemd unit (fixes the "worked until the box was rebooted" failure)
+#
+#   sudo cp deploy/mgo-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mgo-server
+#   systemctl status mgo-server && journalctl -u mgo-server -f
+#
+# Adjust USER/GROUP, WorkingDirectory and the EnvironmentFile path for your host.
+# Config lives in the env file (see deploy/mgo-server.env.example); process env
+# wins over <install>/.env, so both sources are fine — keep one to avoid surprises.
+
+[Unit]
+Description=MGOServer — MGO visualization service (jobs API + CesiumJS viewer)
+Documentation=https://github.com/Johnly1986/MGOServer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/MGOServer
+EnvironmentFile=/etc/mgo-server.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=3
+
+# Long conversions: mgo children are not killed on restart-request by default,
+# give them time, then the job manager marks them interrupted on next boot.
+TimeoutStopSec=30
+KillMode=mixed
+
+# The workspace holds uploads, artifacts and the persisted IP whitelist.
+ReadWritePaths=/opt/MGOServer/workspace
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

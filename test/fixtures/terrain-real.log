@@ -1,0 +1,20 @@
+Warning 1: File with negative value for ScaleY in GeoPixelScale tag. This is rather unusual. GDAL, contrary to the GeoTIFF specification, assumes that the file was intended to be north-up, and will treat this file as if ScaleY was positive. You may override this behavior by setting the GTIFF_HONOUR_NEGATIVE_SCALEY configuration option to YES
+[TerrainQuadtree] No projection — assuming EPSG:4326 (geographic)
+[TerrainQuadtree] Geographic bounds: W=120 S=30.0002 E=120.01 N=30.01
+[TerrainQuadtree] Max level (user override): 2
+[TerrainQuadtree] Level 2 (leaf): X[6,6] Y[1,1] (1 candidates)
+[TerrainQuadtree]   leaf sampling 1/1 (100%, added 1, empty 0)
+[TerrainQuadtree]   leaf sampling done: 1/1 (added 1, empty 0)
+[TerrainQuadtree] Level 1 (ancestor): added 1, empty 0
+[TerrainQuadtree] Level 0 (ancestor): added 1, empty 0
+[TerrainQuadtree] Level 0 (ancestor): added missing root tile (0,0) as flat placeholder
+[TerrainQuadtree] Generated 4 non-empty tiles across 3 LOD levels (0 -> 2)
+[TerrainConverter] Progress: 0/4
+[Normals-ECEF] tile 2/6/1 center lat=22.5000 lon=112.5000
+[TerrainConverter] Wrote /tmp/terrain_smoke/2/6/2.terrain (8725 bytes, 444 verts, 819 tris)
+[Normals-ECEF] tile 1/3/0 center lat=45.0000 lon=135.0000
+[TerrainConverter] Wrote /tmp/terrain_smoke/1/3/1.terrain (11529 bytes, 586 verts, 1095 tris)
+[Normals-ECEF] tile 0/1/0 center lat=0.0000 lon=90.0000
+[TerrainConverter] Wrote /tmp/terrain_smoke/0/1/0.terrain (26903 bytes, 1383 verts, 2579 tris)
+[TerrainConverter] Wrote /tmp/terrain_smoke/0/0/0.terrain (28593 bytes, 1495 verts, 2693 tris)
+[TerrainConverter] Done: 4/4
