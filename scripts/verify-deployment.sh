@@ -48,8 +48,25 @@ echo "############ 0. preflight ############"
 command -v node >/dev/null || { echo "node required"; exit 1; }
 NV="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$NV" -ge 20 ] && ok "node $(node -v) (>= 20)" || bad "node too old" "$NV"
-[ -f "$SRC_WS/whitelist.json" ] && cp "$SRC_WS/whitelist.json" "$SCRATCH/whitelist.json" \
-  && echo "seeded scratch whitelist from $SRC_WS/whitelist.json" || echo "no live whitelist.json; scratch starts localhost-only"
+# Client IP under test: the first non-localhost entry of the live whitelist if the
+# deployment has one (workspace/ is gitignored, so a fresh clone has none) —
+# otherwise invent a TEST-NET one and seed it into the scratch whitelist file.
+CLIENT='203.0.113.20'
+if [ -f "$SRC_WS/whitelist.json" ]; then
+  cp "$SRC_WS/whitelist.json" "$SCRATCH/whitelist.json"
+  LIVE=$(node -p "require('$SCRATCH/whitelist.json').find(e=>e!=='127.0.0.1'&&e!=='::1')||''" 2>/dev/null)
+  if [ -n "$LIVE" ]; then
+    CLIENT="$LIVE"
+    echo "seeded scratch whitelist from $SRC_WS/whitelist.json"
+  else
+    printf '[\n  "127.0.0.1",\n  "::1",\n  "%s"\n]\n' "$CLIENT" > "$SCRATCH/whitelist.json"
+    echo "live whitelist is localhost-only; scratch seeded with $CLIENT"
+  fi
+else
+  printf '[\n  "127.0.0.1",\n  "::1",\n  "%s"\n]\n' "$CLIENT" > "$SCRATCH/whitelist.json"
+  echo "no $SRC_WS/whitelist.json (fresh clone); scratch seeded with $CLIENT"
+fi
+echo "  (client IP under test: $CLIENT)"
 WS="$SCRATCH"
 
 echo "############ 1. boot: bind + binary discovery + loud startup log ############"
@@ -61,12 +78,10 @@ grep -q '"found":true' "$LOG" && ok "mgo binary discovered and probed ($(grep -o
   || bad "mgo binary not runnable — set MGO_BINARY" "$(grep -o '"binary":"[^"]*"' "$LOG" | head -1)"
 grep -q '"trustProxy":"loopback"' "$LOG" && ok "trustProxy=loopback (XFF only from a local proxy)" \
   || bad "trustProxy log field" "$(grep -o '"trustProxy":[^,]*' "$LOG" | head -1)"
-grep -q '"whitelistFile":"[^"]*whitelist.json"' "$LOG" && ok "startup log names the whitelist file" || bad "whitelistFile log field" ""
+grep -q "\"whitelistFile\":\"$SCRATCH/whitelist.json" "$LOG" && ok "startup log names the whitelist file" \
+  || bad "whitelistFile log field" "$(grep -o '"whitelistFile":"[^"]*"' "$LOG" | head -1)"
 
 echo "############ 2. whitelist gate ############"
-CLIENT="$(node -p "const w=require('$SCRATCH/whitelist.json');(w.find(e=>e!=='127.0.0.1'&&e!=='::1')||'203.0.113.20')" 2>/dev/null)"
-[ -n "$CLIENT" ] || CLIENT='203.0.113.20'
-echo "  (testing client IP: $CLIENT)"
 chk "$CLIENT through local nginx → console 200" 200 "$(code -H "X-Forwarded-For: $CLIENT" "$BASE/console.html")"
 chk "$CLIENT → capabilities.allowed=true" true \
     "$(body -H "X-Forwarded-For: $CLIENT" "$BASE/api/v1/capabilities" | grep -o '"allowed":[a-z]*' | cut -d: -f2)"
