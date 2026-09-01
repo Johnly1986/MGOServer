@@ -39,11 +39,11 @@ function envBool(name, def) {
 /**
  * Locate the mgo executable.
  *
- * This service is a standalone repo; the C++ toolkit it drives (MGOConsole) is a
- * separate checkout.  Search order:
+ * Search order:
  *   1. MGO_BINARY — explicit override, always wins
- *   2. ../MGO/build/bin/**   — sibling checkout (the expected dev layout)
- *   3. ./build/bin/**        — toolkit vendored inside this repo
+ *   2. ./build/bin/**        — binary bundled with this repo (default, commit includes
+ *                              MGOConsole + its .so set with $ORIGIN RUNPATH)
+ *   3. ../MGO/build/bin/**   — sibling checkout (dev layout, engine built separately)
  *   4. <parent>/build/bin/** — legacy, when this code still lived in MGO/mgo-server
  *   5. 'mgo' on PATH
  */
@@ -54,7 +54,7 @@ export function findMgoBinary(explicit) {
   if (explicit) return explicit;
 
   const cands = [];
-  for (const root of [path.resolve(PKG_ROOT, '..', 'MGO'), PKG_ROOT, path.resolve(PKG_ROOT, '..')]) {
+  for (const root of [PKG_ROOT, path.resolve(PKG_ROOT, '..', 'MGO'), path.resolve(PKG_ROOT, '..')]) {
     cands.push(
       path.join(root, 'build', 'bin', 'MGOConsole'),
       path.join(root, 'build', 'bin', 'MGOConsole.exe'),
