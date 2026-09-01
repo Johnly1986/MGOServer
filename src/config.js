@@ -36,13 +36,18 @@ function envBool(name, def) {
   return ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase());
 }
 
+/** Platform sub-directory of build/bin/ that holds the bundled engine binary
+ *  and its side-car libraries: windows/ for MGOConsole.exe + .dll, linux/ for
+ *  MGOConsole + .so ($ORIGIN RUNPATH, so the folder can move freely). */
+export const PLATFORM_BIN_DIR = process.platform === 'win32' ? 'windows' : 'linux';
+
 /**
  * Locate the mgo executable.
  *
  * Search order:
  *   1. MGO_BINARY — explicit override, always wins
- *   2. ./build/bin/**        — binary bundled with this repo (default, commit includes
- *                              MGOConsole + its .so set with $ORIGIN RUNPATH)
+ *   2. ./build/bin/<platform>/  — binary bundled with this repo, windows/ or linux/
+ *      (falls back to a flat ./build/bin/ from older layouts)
  *   3. ../MGO/build/bin/**   — sibling checkout (dev layout, engine built separately)
  *   4. <parent>/build/bin/** — legacy, when this code still lived in MGO/mgo-server
  *   5. 'mgo' on PATH
@@ -53,14 +58,13 @@ export function findMgoBinary(explicit) {
   // wrong binary ran".  probeMgo() reports { path, found:false } and startup warns.
   if (explicit) return explicit;
 
+  const bins = ['MGOConsole', 'MGOConsole.exe', path.join('Release', 'MGOConsole.exe')];
   const cands = [];
+  const roots = [];
   for (const root of [PKG_ROOT, path.resolve(PKG_ROOT, '..', 'MGO'), path.resolve(PKG_ROOT, '..')]) {
-    cands.push(
-      path.join(root, 'build', 'bin', 'MGOConsole'),
-      path.join(root, 'build', 'bin', 'MGOConsole.exe'),
-      path.join(root, 'build', 'bin', 'Release', 'MGOConsole.exe'),
-    );
+    roots.push(path.join(root, 'build', 'bin', PLATFORM_BIN_DIR), path.join(root, 'build', 'bin'));
   }
+  for (const dir of roots) for (const b of bins) cands.push(path.join(dir, b));
   cands.push('mgo');
   for (const c of cands) {
     try { if (c === 'mgo' || fs.existsSync(c)) return c; } catch { /* ignore */ }
