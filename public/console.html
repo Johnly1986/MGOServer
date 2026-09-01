@@ -72,6 +72,20 @@
   input.bad { border-color:var(--err); box-shadow:0 0 0 3px rgba(239,91,104,.15); }
   ::placeholder { color:var(--dim2); opacity:.8; }
 
+  /* unified field help: ⓘ at the right edge of every control, hover → floating tip */
+  .iw { display:flex; align-items:center; gap:6px; }
+  .iw > :first-child { flex:1; min-width:0; }
+  .iw.ta { align-items:flex-start; }
+  .iw.ta .info { margin-top:10px; }
+  .info { flex:none; width:16px; height:16px; border-radius:50%; border:1px solid var(--line2);
+          color:var(--dim2); text-align:center; cursor:help; user-select:none;
+          font:italic 600 11px/15px Georgia,'Times New Roman',serif; }
+  .info:hover, .info:focus { border-color:var(--acc); color:var(--acc); outline:none; }
+  #tipBox { position:fixed; display:none; z-index:1000; max-width:300px; white-space:pre-line;
+            background:#0c1420; border:1px solid var(--line2); border-radius:8px; padding:8px 11px;
+            font:12px/1.7 system-ui,-apple-system,'Segoe UI',sans-serif; color:var(--fg);
+            box-shadow:0 8px 26px rgba(0,0,0,.5); pointer-events:none; }
+
   /* toggle switch — styled directly on the native checkbox so programmatic
      check()/uncheck() and label clicks keep working */
   .chk { display:flex; align-items:center; gap:9px; margin-top:11px; cursor:pointer; user-select:none; }
@@ -364,33 +378,36 @@ const OPT_CN = {
   ADD: '叠加细化', REPLACE: '替换细化',
 };
 const gProj = () => el2('投影 / CRS（目标自动：三维→地心，二维→经纬度）', [
-  F('proj.crs', 'text', '输入数据坐标系', { span: true, ph: 'EPSG:4547 / WKT / +proj=…', hint: '仅需声明输入数据的坐标系，输出坐标系由服务自动确定' }),
-  F('@prj', 'file', '或上传 .prj / .wkt 文件（优先生效）', { accept: '.prj,.wkt,.proj', span: true }),
+  F('proj.crs', 'text', '输入数据坐标系', { span: true, ph: 'EPSG:4547 / WKT / +proj=…', hint: '声明输入数据所用的坐标系（EPSG 代码 / WKT / proj4 字符串）' }),
+  F('@prj', 'file', '或上传 .prj / .wkt 文件（优先生效）', { accept: '.prj,.wkt,.proj', span: true, hint: '提供投影定义文件，上传后忽略上方文本框' }),
 ]);
 const gOrigin = (label = '坐标原点 Origin（E/N/H，米）') => el2(label, [
-  F('origin', 'vec3', 'Origin', { subs: ['E/X (m)', 'N/Y (m)', 'H (m)'] }),
+  F('origin', 'vec3', 'Origin', { subs: ['E/X (m)', 'N/Y (m)', 'H (m)'], hint: '输出瓦片网格的原点坐标（局部坐标 → 地心的平移量）' }),
 ]);
 const gGeoref = ({ meshOffset = false } = {}) => {
   const g = el2('地理配准', [
-    F('georef.mode', 'select', '配准方式（可自动判定）', { opts: ['', '7param', 'multipos', 'anchor'] }),
-    F('georef.fitOrder', 'select', '拟合阶数（仅控制点拟合）', { opts: ['', '1', '2', '3'] }),
-    F('georef.autoCrs', 'bool', '自动识别源坐标系'),
-    F('georef.sevenParameter', 'seven', '七参数（平移 m · 旋转 角秒 · 尺度 ppm）', { span: true }),
-    F('georef.controlPoints', 'area', '控制点 CSV 文本（源 → 目标）', { span: true }),
-    F('@cps', 'file', '或上传控制点 .csv（优先生效）', { accept: '.csv,.txt', span: true }),
+    F('georef.mode', 'select', '配准方式（可自动判定）', { opts: ['', '7param', 'multipos', 'anchor'], hint: '把源数据对齐到目标坐标系的方法；留空 = 按已填参数自动判定' }),
+    F('georef.fitOrder', 'select', '拟合阶数（仅控制点拟合）', { opts: ['', '1', '2', '3'], hint: '控制点拟合多项式阶数：1=刚性/相似，2=二次，3=三次；点数少时用 1' }),
+    F('georef.autoCrs', 'bool', '自动识别源坐标系', { hint: '让 CLI 尝试从数据 / sidecar 文件识别源 CRS' }),
+    F('georef.sevenParameter', 'seven', '七参数（平移 m · 旋转 角秒 · 尺度 ppm）', { span: true, hint: 'Helmert 七参数：3 平移 + 3 旋转 + 1 尺度，用于不同大地坐标系间的转换',
+      subs: [['mx', null, '平移 (m)'], ['my', null, '平移 (m)'], ['mz', null, '平移 (m)'],
+             ['rx', null, '旋转 (角秒)'], ['ry', null, '旋转 (角秒)'], ['rz', null, '旋转 (角秒)'],
+             ['s', null, '尺度 (ppm)']] }),
+    F('georef.controlPoints', 'area', '控制点 CSV 文本（源 → 目标）', { span: true, hint: '每行一条：源X,源Y,源Z,目标X,目标Y,目标Z（逗号或空格分隔），至少 3 条' }),
+    F('@cps', 'file', '或上传控制点 .csv（优先生效）', { accept: '.csv,.txt', span: true, hint: '内容与上方文本框相同，来自文件时优先生效' }),
   ]);
-  if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移', { subs: ['dE', 'dN', 'dH'] }));
+  if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移', { subs: [['dE', null, '米'], ['dN', null, '米'], ['dH', null, '米']], hint: '配准完成后的整体平移量（米），用于微调成果位置' }));
   return g;
 };
 const gSimplify = ({ local = false, errPh = '留空=不简化' } = {}) => {
   const g = el2('简化', [
-    F('simplify.error', 'num', '误差 error', { ph: errPh, min: 0 }),
-    F('simplify.normalWeight', 'num', '法线权重', { ph: '默认 0.1', min: 0, max: 1 }),
-    F('simplify.threshold', 'num', '三角面比例', { ph: '默认 0.1', min: 0 }),
+    F('simplify.error', 'num', '误差 error', { ph: errPh, min: 0, hint: '简化允许的几何偏差；值越大保留的面越少、速度越快' }),
+    F('simplify.normalWeight', 'num', '法线权重', { ph: '默认 0.1', min: 0, max: 1, hint: '简化时保持法线方向的权重；越大光照越平滑稳定' }),
+    F('simplify.threshold', 'num', '三角面比例', { ph: '默认 0.1', min: 0, hint: '面合并的判定比例；越大简化越保守' }),
     // mesh 的 -L 是带值布尔且 CLI 默认开 → 默认勾选；其余类型默认关
-    F('simplify.lockBorder', 'bool', '锁边（防模型开裂）', local ? { def: true } : {}),
+    F('simplify.lockBorder', 'bool', '锁边（防模型开裂）', local ? { def: true, hint: '固定开放边界与接缝顶点，防止简化后模型出现裂缝' } : { hint: '固定开放边界与接缝顶点，防止简化后模型出现裂缝' }),
   ]);
-  if (local) g.fields.push(F('simplify.localError', 'bool', '按绝对误差简化'));
+  if (local) g.fields.push(F('simplify.localError', 'bool', '按绝对误差简化', { hint: '误差按绝对值（米）逐网格判定，而非相对整模型尺寸' }));
   return g;
 };
 function el2(name, fields) { return { name, fields }; }
@@ -399,9 +416,9 @@ const UI = {
   tiles: () => [gProj(), gOrigin(), gGeoref(), gSimplify()],
   terrain: () => ([
     { name: '地形参数', fields: [
-      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1 }),
-      F('samplesPerTile', 'int', '每瓦片采样数', { ph: '65', min: 2, max: 255, odd: true }),
-      F('normals', 'bool', '导出顶点法线', { def: true }),
+      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1, hint: '地形瓦片细分到第几级；越大越精细，输出量级成倍增加' }),
+      F('samplesPerTile', 'int', '每瓦片采样数', { ph: '65', min: 2, max: 255, odd: true, hint: '每个地形瓦片的网格采样点数（须为奇数，如 33/65/129/257）' }),
+      F('normals', 'bool', '导出顶点法线', { def: true, hint: '输出法线数据，地形光照更平滑（体积略增大）' }),
     ]},
     gOrigin('TIF 基点覆盖 Origin'), gProj(), gGeoref(),
     gSimplify({ local: false, errPh: '留空=0.001（归一化）' }),
@@ -409,24 +426,24 @@ const UI = {
   image: () => [gProj()],
   geojson: () => ([{ name: '转换参数（输出默认转经纬度）', fields: [
     F('sourceCrs', 'text', '源坐标系', { span: true, ph: 'EPSG:4547 / ENU:lat,lon / WKT / +proj=' , hint: '留空则读文件内 crs 成员，均无时按经纬度处理；目标坐标系固定为 EPSG:4326，无需设置' }),
-    F('pretty', 'bool', '格式化输出 JSON'),
+    F('pretty', 'bool', '格式化输出 JSON', { hint: '缩进排版输出文件，便于阅读（体积略增大）' }),
   ]}]),
   mesh: () => ([
     { name: '输出', fields: [
-      F('outputFormat', 'select', '输出格式', { opts: ['glb', 'gltf', 'obj', 'fbx', 'ply'] }),
-      F('coordMode', 'select', '输出坐标系', { opts: ['', 'original', 'left'] }),
-      F('reorder', 'bool', '顶点重排优化（减小体积）'),
-      F('rebuild', 'bool', '加载时重建场景'),
-      F('@cfg', 'file', '或上传逐构件简化配置 CSV（按名称匹配）', { accept: '.csv,.txt', span: true }),
+      F('outputFormat', 'select', '输出格式', { opts: ['glb', 'gltf', 'obj', 'fbx', 'ply'], hint: '目标模型格式；glb 为二进制单文件，最通用' }),
+      F('coordMode', 'select', '输出坐标系', { opts: ['', 'original', 'left'], hint: 'original=保持原始坐标，left=转左手系；默认自动转地心坐标' }),
+      F('reorder', 'bool', '顶点重排优化（减小体积）', { hint: '按空间邻接重排顶点顺序，压缩率更高、加载更快' }),
+      F('rebuild', 'bool', '加载时重建场景', { hint: '加载输入时强制重建场景图，用于排查异常结构' }),
+      F('@cfg', 'file', '或上传逐构件简化配置 CSV（按名称匹配）', { accept: '.csv,.txt', span: true, hint: '每行：构件名,误差 —— 为不同构件单独指定简化力度' }),
     ]},
     gProj(), gGeoref({ meshOffset: true }), gSimplify({ local: true }),
   ]),
   osgb: () => ([
     { name: 'OSGB', fields: [
-      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1 }),
+      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1, hint: '模型瓦片最大细分层级；越大越精细，耗时成倍增加' }),
       F('enu', 'vec3', 'ENU 参考点（覆盖自动计算）', {
         subs: [['纬度°', { min: -90, max: 90 }], ['经度°', { min: -180, max: 180 }], ['高程 m', null]],
-        span: true,
+        span: true, hint: '转站参考点（模型所在地理位置）；留空 = 从 OSG 元数据自动计算',
       }),
     ]},
     gOrigin(), gProj(), gGeoref(), gSimplify(),
@@ -435,14 +452,14 @@ const UI = {
 const BASIC = {
   tiles: [
     { name: '3D Tiles', fields: [
-      F('zUp', 'bool', '输入已是 Z-up（跳过 Y↔Z 翻转）', { span: true }),
+      F('zUp', 'bool', '输入已是 Z-up（跳过 Y↔Z 翻转）', { span: true, hint: '仅当源模型坐标已符合测量惯例（Z 轴向上）时勾选' }),
     ]},
     { name: '分块与 LOD', fields: [
-      F('rootGeometricError', 'num', '根几何误差（米）', { ph: '留空=按包围盒自动', pos: true }),
-      F('tileGeometricError', 'num', '瓦片几何误差（米）', { ph: '留空=自动', pos: true }),
-      F('refine', 'select', '细化模式', { opts: ['', 'ADD', 'REPLACE'] }),
-      F('minBlockDistance', 'num', '最小分块距离（米）', { ph: '留空=自动', pos: true }),
-      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1 }),
+      F('rootGeometricError', 'num', '根几何误差（米）', { ph: '留空=按包围盒自动', pos: true, hint: '最粗一级瓦片的屏幕误差预算；越大首屏越快、远景越糊' }),
+      F('tileGeometricError', 'num', '瓦片几何误差（米）', { ph: '留空=自动', pos: true, hint: '相邻 LOD 层级间的误差步进' }),
+      F('refine', 'select', '细化模式', { opts: ['', 'ADD', 'REPLACE'], hint: 'ADD=子瓦片叠加在父瓦片上（地形常用），REPLACE=子瓦片替换父瓦片（白模常用）' }),
+      F('minBlockDistance', 'num', '最小分块距离（米）', { ph: '留空=自动', pos: true, hint: '两物体距离小于此值时合并为一块，不再细分' }),
+      F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1, hint: '模型瓦片最大细分层级；越大越精细，耗时成倍增加' }),
     ]},
   ],
 };
@@ -576,58 +593,107 @@ function paintField(node) {
   const err = specError(node._f, node.value);
   node.classList.toggle('bad', !!err);
   const h = node._hint;
-  if (h) { h.textContent = err || h.dataset.def || ''; h.classList.toggle('bad', !!err); }
+  if (h) { h.textContent = err || ''; h.classList.toggle('bad', !!err); }
 }
 function numInput(f, attrs) {
   const s = el('input', { type: 'number', step: f.t === 'int' ? '1' : 'any',
     ...(f.min != null ? { min: f.min } : {}), ...(f.max != null ? { max: f.max } : {}), ...attrs });
-  const rng = rangeHint(f);
-  const h = el('div', { class: 'hint' }, rng);
-  h.dataset.def = rng;
-  if (rng) { s._f = f; s._hint = h; s.addEventListener('input', () => paintField(s)); }
+  const h = el('div', { class: 'hint' }); /* 平时留空（:empty 隐藏），仅非法时显示红字 */
+  s._f = f; s._hint = h;
+  s.addEventListener('input', () => paintField(s));
   return [s, h];
 }
+/* 统一输入提示：控件右侧 ⓘ，悬停显示「用途 → 取值范围 → 留空语义」 */
+function tipFor(f) {
+  const lines = [];
+  if (f.hint) lines.push(f.hint);
+  if (f.t === 'num' || f.t === 'int') {
+    const r = rangeHint(f);
+    if (r) lines.push(r);
+    lines.push('留空 = 不传该参数（用 CLI 默认值）');
+  } else if (f.t === 'select') lines.push('选「默认（不指定）」= 不传该参数');
+  else if (f.t === 'text' || f.t === 'area') lines.push('留空 = 不传该参数');
+  return lines.join('\n');
+}
+const infoIcon = (tip) => el('i', { class: 'info', tabindex: '0', 'data-tip': tip || '暂无说明' }, 'i');
+const iw = (node, tip, ta) => el('div', { class: 'iw' + (ta ? ' ta' : '') }, node, infoIcon(tip));
 function fieldNode(f) {
   const id = 'f_' + f.k.replace(/[^a-zA-Z0-9]/g, '_');
+  const cls = 'fcell' + (f.span ? ' fspan' : '');
   if (f.t === 'bool') {
     const cb = el('input', { type: 'checkbox', id, 'data-k': f.k });
     if (f.def) cb.checked = true;
-    return el('div', { class: 'chk' + (f.span ? ' fspan' : '') }, cb, el('label', { for: id }, f.label));
+    const tail = f.def ? '默认已开启；关闭 = 显式停用' : '勾选 = 开启；不勾 = 不传该参数';
+    return el('div', { class: 'chk ' + cls }, cb, el('label', { for: id }, f.label),
+      infoIcon([f.hint, tail].filter(Boolean).join('\n')));
   }
   if (f.t === 'select') {
     const s = el('select', { id, 'data-k': f.k }, ...f.opts.map(o => el('option', { value: o },
       o ? (OPT_CN[o] ? `${o} · ${OPT_CN[o]}` : o) : '默认（不指定）')));
-    return el('div', {}, label(f.label), s);
+    return el('div', { class: cls }, label(f.label), iw(s, tipFor(f)));
   }
   if (f.t === 'num' || f.t === 'int') {
     const [s, h] = numInput(f, { id, 'data-k': f.k, placeholder: f.ph || '' });
-    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s, h);
+    return el('div', { class: cls }, label(f.label), iw(s, tipFor(f)), h);
   }
   if (f.t === 'text') {
     const s = el('input', { type: 'text', id, 'data-k': f.k, placeholder: f.ph || '' });
-    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s, el('div', { class: 'hint' }, f.hint || ''));
+    return el('div', { class: cls }, label(f.label), iw(s, tipFor(f)));
   }
   if (f.t === 'area') {
     const s = el('textarea', { id, 'data-k': f.k, placeholder: f.ph || 'sx,sy,sz,tx,ty,tz\n12345.6,2345678.9,42.0,445000,3260000,0' });
-    return el('div', { class: 'fspan' }, label(f.label), s);
+    return el('div', { class: 'fcell fspan' }, label(f.label), iw(s, tipFor(f), true));
   }
   if (f.t === 'file') {
     const s = el('input', { type: 'file', id, 'data-k': f.k, accept: f.accept || '' });
-    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), s);
+    return el('div', { class: cls }, label(f.label), iw(s, [f.hint, '不选择 = 不上传'].filter(Boolean).join('\n')));
   }
   if (f.t === 'vec3' || f.t === 'seven') {
     const subs = (f.subs || (f.t === 'vec3' ? ['X', 'Y', 'Z'] : ['mx', 'my', 'mz', 'rx', 'ry', 'rz', 's']))
       .map((x) => (Array.isArray(x) ? x : [x, null]));
-    const grid = el('div', { class: 'fgrid' }, ...subs.map(([sb, rng], i) => {
+    const grid = el('div', { class: 'fgrid' }, ...subs.map(([sb, rng, note], i) => {
+      const tip = [f.hint,
+        `${sb}${note ? ' — ' + note : ''}${rng ? ' · ' + rangeHint({ t: 'num', ...rng }) : ''}`,
+        `整组 ${subs.length} 个值需一次填全，或全部留空`].filter(Boolean).join('\n');
       const cell = [label(sb)];
-      if (rng) { const [s, h] = numInput({ t: 'num', ...rng }, { 'data-vec': f.k, 'data-i': i }); cell.push(s, h); }
-      else cell.push(el('input', { type: 'number', step: 'any', 'data-vec': f.k, 'data-i': i }));
-      return el('div', {}, ...cell);
+      if (rng) { const [s, h] = numInput({ t: 'num', ...rng }, { 'data-vec': f.k, 'data-i': i }); cell.push(iw(s, tip), h); }
+      else cell.push(iw(el('input', { type: 'number', step: 'any', 'data-vec': f.k, 'data-i': i }), tip));
+      return el('div', { class: 'fcell' }, ...cell);
     }));
-    return el('div', { class: f.span ? 'fspan' : '' }, label(f.label), grid);
+    return el('div', { class: cls }, label(f.label), grid);
   }
   throw new Error('field type? ' + f.t);
 }
+
+/* 悬浮 tip：body 级 fixed 浮层，不受 details overflow 裁剪，视口边缘自动翻转 */
+const tipBox = el('div', { id: 'tipBox' });
+document.body.append(tipBox);
+let tipOwner = null;
+function showTip(t) {
+  tipBox.textContent = t.dataset.tip || '';
+  tipBox.style.display = 'block';
+  const r = t.getBoundingClientRect();
+  const bw = tipBox.offsetWidth, bh = tipBox.offsetHeight;
+  let x = r.left + r.width / 2 - bw / 2;
+  x = Math.max(8, Math.min(x, innerWidth - bw - 8));
+  let y = r.top - bh - 8;
+  if (y < 8) y = Math.min(r.bottom + 8, innerHeight - bh - 8);
+  tipBox.style.left = x + 'px'; tipBox.style.top = y + 'px';
+}
+function hideTip() { tipBox.style.display = 'none'; tipOwner = null; }
+document.addEventListener('pointerover', (e) => {
+  const t = e.target?.closest?.('.info');
+  if (t === tipOwner) return;
+  if (t) { tipOwner = t; showTip(t); } else if (tipOwner) hideTip();
+});
+document.addEventListener('focusin', (e) => {
+  const t = e.target?.closest?.('.info');
+  if (t) { tipOwner = t; showTip(t); }
+});
+document.addEventListener('focusout', (e) => { if (e.target?.closest?.('.info')) hideTip(); });
+document.addEventListener('pointerdown', (e) => { if (!e.target?.closest?.('.info')) hideTip(); });
+addEventListener('scroll', hideTip, true);
+addEventListener('resize', hideTip);
 
 function renderForm(type) {
   const form = $('#paramForm'); form.innerHTML = '';
@@ -687,7 +753,7 @@ function validateForm() {
   for (const n of $('#paramForm').querySelectorAll('input[data-k]')) {
     if (!n._f) continue;
     const e = specError(n._f, n.value);
-    if (e) { paintField(n); errs.push(`${n.closest('div').querySelector('label').textContent}：${e}`); }
+    if (e) { paintField(n); errs.push(`${n.closest('.fcell').querySelector('label').textContent}：${e}`); }
   }
   for (const key of Object.keys(VEC_CN)) {
     const nodes = [...$('#paramForm').querySelectorAll(`[data-vec="${key}"]`)];
