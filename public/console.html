@@ -258,7 +258,7 @@
 
 <main>
   <section class="panel">
-    <div class="panelHead"><h3>新建处理任务</h3><span class="tag">高级参数均可留空</span></div>
+    <div class="panelHead"><h3>新建处理任务</h3><span class="tag">*</span></div>
 
     <div class="hint" id="ipNote" style="margin-bottom:6px">检查 IP 授权…</div>
 
@@ -351,8 +351,8 @@ const ipNote = () => {
   if (!n || !caps?.client) return;
   const { ip, allowed } = caps.client;
   n.innerHTML = allowed
-    ? `🟢 IP <b>${esc(ip)}</b> 已在白名单，可提交任务`
-    : `🔴 IP <b>${esc(ip)}</b> 不在白名单，提交将被拒绝 · 请在服务器本机打开「白名单」页添加`;
+    ? `🟢 IP <b>${esc(ip)}</b> `
+    : `🔴 IP <b>${esc(ip)}</b> 功能☝️`;
 };
 const showMsg = (text, kind) => {
   const m = $('#msg');
@@ -364,12 +364,12 @@ const showMsg = (text, kind) => {
 /* ================ field spec ================ */
 const ICONS = { tiles: '🏗', terrain: '⛰', image: '🛰', geojson: '📍', mesh: '🧊', osgb: '📷' };
 const DESC = {
-  tiles: '模型（FBX/OBJ 等）→ 3D Tiles（自动转地心坐标），可配准、简化',
+  tiles: '模型（FBX/OBJ 等）→ 3D Tile，可配准、简化',
   terrain: 'DEM GeoTIFF → Cesium 地形瓦片',
   image: '正射影像 GeoTIFF → TMS 瓦片',
-  geojson: 'GeoJSON → 经纬度坐标（EPSG:4326）',
+  geojson: 'GeoJSON → EPSG:4326',
   mesh: '模型简化 / 格式转换（glb · obj · fbx）',
-  osgb: 'OSGB 倾斜摄影 → 3D Tiles，支持文件夹上传或本地路径',
+  osgb: 'OSGB 倾斜摄影 → 3D Tiles',
 };
 const TYPE_CN = {
   tiles: '模型转 3D Tiles', terrain: '地形切片', image: '影像切片',
@@ -382,35 +382,35 @@ const OPT_CN = {
   original: '原始坐标', left: '左手坐标系',
   ADD: '叠加细化', REPLACE: '替换细化',
 };
-const gProj = () => el2('投影 / CRS（目标自动：三维→地心，二维→经纬度）', [
+const gProj = () => el2('投影', [
   F('proj.crs', 'text', '输入数据坐标系', { span: true, ph: 'EPSG:4547 / WKT / +proj=…', hint: '声明输入数据所用的坐标系（EPSG 代码 / WKT / proj4 字符串）' }),
-  F('@prj', 'file', '或上传 .prj / .wkt 文件（优先生效）', { accept: '.prj,.wkt,.proj', span: true, hint: '提供投影定义文件，上传后忽略上方文本框' }),
+  F('@prj', 'file', '或上传 .prj / .wkt 文件', { accept: '.prj,.wkt,.proj', span: true, hint: '提供投影定义文件，上传后忽略上方文本框' }),
 ]);
-const gOrigin = (label = '坐标原点 Origin（E/N/H，米）') => el2(label, [
+const gOrigin = (label = '坐标原点') => el2(label, [
   F('origin', 'vec3', 'Origin', { subs: ['E/X (m)', 'N/Y (m)', 'H (m)'], hint: '输出瓦片网格的原点坐标（局部坐标 → 地心的平移量）' }),
 ]);
 const gGeoref = ({ meshOffset = false } = {}) => {
   const g = el2('地理配准', [
-    F('georef.mode', 'select', '配准方式（可自动判定）', { opts: ['', '7param', 'multipos', 'anchor'], hint: '把源数据对齐到目标坐标系的方法；留空 = 按已填参数自动判定' }),
-    F('georef.fitOrder', 'select', '拟合阶数（仅控制点拟合）', { opts: ['', '1', '2', '3'], hint: '控制点拟合多项式阶数：1=刚性/相似，2=二次，3=三次；点数少时用 1' }),
+    F('georef.mode', 'select', '配准方式', { opts: ['', '7param', 'multipos', 'anchor'], hint: '把源数据对齐到目标坐标系的方法；留空 = 按已填参数自动判定' }),
+    F('georef.fitOrder', 'select', '拟合阶数', { opts: ['', '1', '2', '3'], hint: '控制点拟合多项式阶数：1=刚性/相似，2=二次，3=三次；点数少时用 1' }),
     F('georef.autoCrs', 'bool', '自动识别源坐标系', { hint: '让 CLI 尝试从数据 / sidecar 文件识别源 CRS' }),
-    F('georef.sevenParameter', 'seven', '七参数（平移 m · 旋转 角秒 · 尺度 ppm）', { span: true, hint: 'Helmert 七参数：3 平移 + 3 旋转 + 1 尺度，用于不同大地坐标系间的转换',
+    F('georef.sevenParameter', 'seven', '七参数', { span: true, hint: 'Helmert 七参数：3 平移 + 3 旋转 + 1 尺度，用于不同大地坐标系间的转换',
       subs: [['mx', null, '平移 (m)'], ['my', null, '平移 (m)'], ['mz', null, '平移 (m)'],
              ['rx', null, '旋转 (角秒)'], ['ry', null, '旋转 (角秒)'], ['rz', null, '旋转 (角秒)'],
              ['s', null, '尺度 (ppm)']] }),
     F('georef.controlPoints', 'area', '控制点 CSV 文本（源 → 目标）', { span: true, hint: '每行一条：源X,源Y,源Z,目标X,目标Y,目标Z（逗号或空格分隔），至少 3 条' }),
-    F('@cps', 'file', '或上传控制点 .csv（优先生效）', { accept: '.csv,.txt', span: true, hint: '内容与上方文本框相同，来自文件时优先生效' }),
+    F('@cps', 'file', '或上传控制点 .csv', { accept: '.csv,.txt', span: true, hint: '内容与上方文本框相同，来自文件时优先生效' }),
   ]);
   if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移', { subs: [['dE', null, '米'], ['dN', null, '米'], ['dH', null, '米']], hint: '配准完成后的整体平移量（米），用于微调成果位置' }));
   return g;
 };
 const gSimplify = ({ local = false, errPh = '留空=不简化' } = {}) => {
   const g = el2('简化', [
-    F('simplify.error', 'num', '误差 error', { ph: errPh, min: 0, hint: '简化允许的几何偏差；值越大保留的面越少、速度越快' }),
+    F('simplify.error', 'num', '误差 error', { ph: errPh, min: 0, max: 1, hint: '简化允许的几何偏差；值越大保留的面越少、速度越快' }),
     F('simplify.normalWeight', 'num', '法线权重', { ph: '默认 0.1', min: 0, max: 1, hint: '简化时保持法线方向的权重；越大光照越平滑稳定' }),
     F('simplify.threshold', 'num', '三角面比例', { ph: '默认 0.1', min: 0, hint: '面合并的判定比例；越大简化越保守' }),
     // mesh 的 -L 是带值布尔且 CLI 默认开 → 默认勾选；其余类型默认关
-    F('simplify.lockBorder', 'bool', '锁边（防模型开裂）', local ? { def: true, hint: '固定开放边界与接缝顶点，防止简化后模型出现裂缝' } : { hint: '固定开放边界与接缝顶点，防止简化后模型出现裂缝' }),
+    F('simplify.lockBorder', 'bool', '锁边', local ? { def: true, hint: '固定开放边界与接缝顶点，防止简化后模型出现裂缝' } : { hint: '固定开放边界与接缝顶点，防止简化后模型出现裂缝' }),
   ]);
   if (local) g.fields.push(F('simplify.localError', 'bool', '按绝对误差简化', { hint: '误差按绝对值（米）逐网格判定，而非相对整模型尺寸' }));
   return g;
@@ -425,7 +425,7 @@ const UI = {
       F('samplesPerTile', 'int', '每瓦片采样数', { ph: '65', min: 2, max: 255, odd: true, hint: '每个地形瓦片的网格采样点数（须为奇数，如 33/65/129/257）' }),
       F('normals', 'bool', '导出顶点法线', { def: true, hint: '输出法线数据，地形光照更平滑（体积略增大）' }),
     ]},
-    gOrigin('TIF 基点覆盖 Origin'), gProj(), gGeoref(),
+    gOrigin('坐标原点'), gProj(), gGeoref(),
     gSimplify({ local: false, errPh: '留空=0.001（归一化）' }),
   ]),
   image: () => [gProj()],
@@ -457,7 +457,7 @@ const UI = {
 const BASIC = {
   tiles: [
     { name: '3D Tiles', fields: [
-      F('zUp', 'bool', '输入已是 Z-up（跳过 Y↔Z 翻转）', { span: true, hint: '仅当源模型坐标已符合测量惯例（Z 轴向上）时勾选' }),
+      F('zUp', 'bool', 'Y-up ↔ Z-up', { span: true, hint: '仅当源模型坐标已符合测量惯例（Z 轴向上）时勾选' }),
     ]},
     { name: '分块与 LOD', fields: [
       F('rootGeometricError', 'num', '根几何误差（米）', { ph: '留空=按包围盒自动', pos: true, hint: '最粗一级瓦片的屏幕误差预算；越大首屏越快、远景越糊' }),
@@ -506,7 +506,7 @@ function renderInputArea(type) {
       el('input', { type: 'file', id: 'osgbZip', accept: '.zip' }),
       el('div', { class: 'dropInner' },
         el('span', { class: 'ic' }, '🗜'),
-        el('span', { class: 'txt' }, '或上传 ZIP 压缩包（服务端自动解压）'),
+        el('span', { class: 'txt' }, '或上传 ZIP 压缩包'),
         el('span', { class: 'meta', id: 'osgbZipMeta' }, '')));
     const zf = zdrop.querySelector('input');
     zf.onchange = () => {
@@ -517,7 +517,7 @@ function renderInputArea(type) {
     };
     area.append(zdrop);
     if (caps?.features?.localPathInput) {
-      area.append(label('或服务器本地路径（免上传，适合大数据）'));
+      area.append(label('或服务器本地路径'));
       area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '/data/osgb_root/Data 或 D:\\proj\\Data' }));
     } else {
       area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '', hidden: true }));
