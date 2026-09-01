@@ -71,6 +71,11 @@
   .hint.bad { color:var(--err); }
   input.bad { border-color:var(--err); box-shadow:0 0 0 3px rgba(239,91,104,.15); }
   ::placeholder { color:var(--dim2); opacity:.8; }
+  /* number inputs: drop the native light spin arrows (clash with dark theme);
+     keyboard ↑/↓ stepping still works */
+  input[type=number] { appearance:textfield; -moz-appearance:textfield; }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
 
   /* unified field help: ⓘ at the right edge of every control, hover → floating tip */
   .iw { display:flex; align-items:center; gap:6px; }
