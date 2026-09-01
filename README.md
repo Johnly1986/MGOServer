@@ -44,12 +44,21 @@ Nginx 等任意 Web 服务器发布。
 | 依赖 | 版本要求 | 说明 |
 |------|----------|------|
 | Node.js | >= 20 | 运行 MGOServer，服务层唯一直接依赖 |
-| MGO 可执行文件 | v1.0.0+ | 实际执行切片；自动探测 `../MGO/build/bin/MGOConsole`，否则用 `MGO_BINARY` 指定 |
-| CMake、C++17 编译器、vcpkg | >= 3.18；GCC 9+ / MSVC 2022 | 仅自行构建 MGO 引擎时需要；GDAL、PROJ、Boost 等由 vcpkg 自动安装 |
+| MGO 可执行文件 | v1.0.0 | **仓库已内置** Linux x86-64 预编译版（`build/bin/`，含引擎自带 `.so`，RUNPATH 已指向 `$ORIGIN`），clone 即用；Windows 等其他平台自行构建后放入 `build/bin/`，或用 `MGO_BINARY` 指路 |
+| 系统 GIS 运行库 | Ubuntu 24.04 apt | 内置二进制所需的动态库，一条命令装齐：`sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data` |
+| CMake、C++17 编译器、vcpkg | >= 3.18；GCC 9+ / MSVC 2022 | 仅自行构建 MGO 引擎时需要；Assimp、Boost 等由 vcpkg 自动安装 |
 
 ## 📦 安装
 
-**1. 获取 MGO 引擎**（已有可执行文件可跳过）
+Linux x86-64 开箱即用——引擎二进制已随仓库提供，装好 Node 和一组运行库即可：
+
+```bash
+git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
+npm ci
+sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data
+```
+
+**自行构建引擎**（内置的只有 Linux x86-64；Windows / macOS 或其他发行版需要自己出一份）：
 
 ```bash
 git clone https://github.com/Johnly1986/MGO.git ../MGO
@@ -60,12 +69,8 @@ make release        # Linux / macOS
 #   cmake --build build --config Release
 ```
 
-**2. 安装服务**
-
-```bash
-git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
-npm ci
-```
+构建产物（`MGOConsole` / `MGOConsole.exe` 及其依赖的 `.so` / `.dll`）放进本仓库 `build/bin/`
+即可被自动发现，放别处则用 `MGO_BINARY` 指定。
 
 ## 🚀 快速开始
 
@@ -102,7 +107,7 @@ curl -H 'Content-Type: application/json' \
 | 变量 | 默认 | 用途 |
 |------|------|------|
 | `MGO_HOST` / `MGO_PORT` | `0.0.0.0` / `8080` | 监听地址 |
-| `MGO_BINARY` | 自动探测 | MGO 可执行文件路径 |
+| `MGO_BINARY` | 自动探测 | MGO 可执行文件路径；默认顺序：本仓库 `build/bin/`（内置）→ 同级 `../MGO/build/bin/` → PATH |
 | `MGO_IP_WHITELIST` | `127.0.0.1`,`::1` | 启动兜底白名单，支持 CIDR |
 | `MGO_MAX_CONCURRENT_JOBS` | `1` | 并发任务数（terrain 内部已并行，谨慎调大） |
 | `MGO_TTL_DAYS` | `7` | 成果保留天数 |
@@ -140,5 +145,6 @@ Apache-2.0，免费、可商用、可闭源集成，无授权验证、无功能�
 不访问外部网络，数据全程留在自己的服务器上。
 
 平台支持：MGO 引擎以 MSVC 2022（Windows）与 GCC 9+（Linux）构建验证，测绘行业常见的
-Windows Server 与机房 Linux 均可运行；macOS 走同一套 vcpkg 流程理论可用，未持续验证。
-服务层 CI 覆盖 Node 20 / 22。
+Windows Server 与机房 Linux 均可运行；内置的预编译引擎为 Ubuntu 24.04 / x86-64 构建，
+Windows 按上文自行构建一份放入 `build/bin/` 即可。macOS 走同一套 vcpkg 流程理论可用，
+未持续验证。服务层 CI 覆盖 Node 20 / 22。
