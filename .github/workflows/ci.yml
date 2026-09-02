@@ -43,21 +43,3 @@ jobs:
 
       - run: node --version
 
-      # --- 临时诊断：失败时把日志尾部转成注解/summary（可用 API 匿名读取），定位后移除 ---
-      - name: Report install failure (temporary)
-        if: failure() && steps.install.conclusion == 'failure'
-        run: |
-          tail -c 12000 /tmp/npm-ci.log >> "$GITHUB_STEP_SUMMARY" || true
-          tail -c 10 /tmp/npm-ci.log 2>/dev/null | head -c 1 >/dev/null
-          tail -n 8 /tmp/npm-ci.log | sed 's/^/::error::/'
-
-      - name: Report test failure (temporary)
-        if: failure() && steps.test.conclusion == 'failure'
-        run: |
-          {
-            echo '### npm test log (tail 12k)'
-            echo '```'
-            tail -c 12000 /tmp/test.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          tail -c 3500 /tmp/test.log | python3 -c "import sys;sys.stdout.write('::error::'+sys.stdin.read().replace(chr(10),'%0A')[:3600])"
