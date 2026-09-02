@@ -257,15 +257,13 @@
             max-width:min(360px, calc(100vw - 28px)); }
   .toast { display:flex; gap:9px; align-items:flex-start; padding:11px 14px; border-radius:10px;
            font-size:13px; line-height:1.45; box-shadow:var(--shadow); animation:slideIn .22s ease-out;
-           border:1px solid; background:rgba(20,26,34,.96); backdrop-filter:blur(8px);
-           /* 宽度与高度都跟着内容"包裹"：文字折行时盒子自动长高，不能被固定 min-height
-              顶出底部空档；无空格长 ID 时盒宽也不能塌缩，故取 max-content 再封顶。
-              显式写 height:auto：Chromium 在该组合（flex + width:max-content + 折行
-              子项）下会把隐式 auto 算成 24px（纯 padding 高、内容溢出盒底），声明
-              后走正常路径按内容定高。 */
-           height:auto; width:max-content; max-width:min(360px, calc(100vw - 28px)); }
+           border:1px solid; background:rgba(20,26,34,.96); backdrop-filter:blur(8px); min-height: 100px;
+           width:max-content; max-width:min(360px, calc(100vw - 28px)); }
+           /* 上面两行缺一不可：仅 max-width 时 .toast 作为 #toasts(列方向) 的 flex 子项会
+              被算成 ~30px 的细条（内容全溢出盒子、超出视口），显式 width:max-content 才按
+              内容取宽、再被 max-width 封顶（长 ID 自动折行）。*/
   .toast .t-msg { min-width:0; overflow-wrap:anywhere; }  /* 长 ID / 无空格串允许任意断行包裹 */
-  .toast .t-x { flex:none; }   /* 关闭按钮不被文字行高拉伸 */
+  .toast .t-ic, .toast .t-x { flex:none; }
   .toast.out { animation:fadeOut .3s forwards; }
   @keyframes slideIn { from { transform:translateX(16px); opacity:0; } }
   @keyframes fadeOut { to { transform:translateY(-6px); opacity:0; } }
@@ -300,7 +298,7 @@
   <div class="brand">
     <div class="logo">M</div>
     <h1>MGO 任务控制台</h1>
-    <span class="ver">v0.1.0</span>
+    <span class="ver">v0.7.0</span>
   </div>
   <div class="headRight">
     <span class="pill" id="health"><i></i><span>连接中…</span></span>
@@ -1112,25 +1110,21 @@ async function openLog(id) {
   } catch { $('#logBox').textContent = '—— 实时日志 ——\n'; }
   scroll();
   es = new EventSource(`/api/v1/jobs/${id}/events`);
-  // Element.append('字符串') 只插入纯文本、不解析 HTML —— 旧写法把 <span class=…>
-  // 包装标签以字面文本塞进了日志（"日志里带 html 标签"，且颜色类从未真正生效）。
-  // 改用 insertAdjacentHTML：包装标签由我们写死，日志正文仍过 esc() 转义。
-  const addLogLine = (html) => $('#logBox').insertAdjacentHTML('beforeend', html);
   es.addEventListener('log', (m) => {
     const line = JSON.parse(m.data).line;
     const cls = /\[(?:Progress|Done)\]/.test(line) ? ' t-prog' : (/^Error|错误|warning/i.test(line) ? ' t-err' : '');
-    addLogLine(`<span class="${cls}">${esc(line)}</span>\n`); scroll();
+    $('#logBox').append(`<span class="${cls}">${esc(line)}</span>\n`); scroll();
   });
   es.addEventListener('progress', (m) => {
     const d = JSON.parse(m.data);
     const j = jobs.get(id); if (j) { j.progress = d.data; j.status = 'running'; render(); }
-    addLogLine(`<span class="t-prog">[progress] ${d.data.done}/${d.data.total} (${d.data.percent}%)</span>\n`); scroll();
+    $('#logBox').append(`<span class="t-prog">[progress] ${d.data.done}/${d.data.total} (${d.data.percent}%)</span>\n`); scroll();
   });
   es.addEventListener('status', (m) => {
     const d = JSON.parse(m.data); const j = jobs.get(id);
     if (j) { j.status = d.status; if (d.artifacts) { j.artifacts = d.artifacts; j.viewerUrl = d.viewerUrl; } render(); }
     logBadge(d.status);
-    addLogLine(`<span class="t-status">[status] ${esc(d.status)}</span>\n`); scroll();
+    $('#logBox').append(`<span class="t-status">[status] ${esc(d.status)}</span>\n`); scroll();
   });
 }
 function closeLog() {
