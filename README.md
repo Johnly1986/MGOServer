@@ -28,7 +28,7 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
   输出自带 `tileset.json` / `layer.json` / `tilemapresource.xml` 描述文件，Cesium URL 直接加载
 - ✅ 切片跑在原生 C++ 进程，terrain 出瓦多线程并行；简化基于扩展版 meshoptimizer，
   锁定瓦片边界不留缝；服务层任务排队限流、可取消、超时兜底、成果按 TTL 自动清理
-- ✅ 坐标系引擎侧：EPSG / WKT / `+proj` / `.prj` 定义投影，7 参数 Helmert、单锚点、
+- ✅ 坐标系引擎：EPSG / WKT / `+proj` / `.prj` 定义投影，7 参数 Helmert、单锚点、
   多控制点最小二乘配准（可自动探测源投影），大场景逐顶点重投影消除切面残差；
   三维转地心坐标、二维转经纬度，前端零补偿
 - ✅ Windows / Linux 双平台，Node.js 服务形态，自带 systemd unit；第三方前端只需调 REST API
