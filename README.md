@@ -1,12 +1,12 @@
 # MGOServer
 
->  3D Tiles 切片工具：基于 MGO C++ 转换引擎包装成 HTTP 服务，浏览器提交模型 / DEM / 影像 / OSGB，返回 Cesium 原生流式瓦片并一键预览。
-
-<img width="1854" height="993" alt="image" src="https://github.com/user-attachments/assets/f8bd158d-91ac-4415-8690-a41cb639a65e" />
-
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](#)
 [![Test](https://github.com/Johnly1986/MGOServer/actions/workflows/ci.yml/badge.svg)](https://github.com/Johnly1986/MGOServer/actions/workflows/ci.yml)
+
+>  3D Tiles 切片工具：基于 MGO C++ 转换引擎包装成 HTTP 服务，浏览器提交模型 / DEM / 影像 / OSGB，返回 Cesium 原生流式瓦片并一键预览。
+
+<img width="1854" height="993" alt="image" src="https://github.com/user-attachments/assets/f8bd158d-91ac-4415-8690-a41cb639a65e" />
 
 ## 📖 项目简介
 
