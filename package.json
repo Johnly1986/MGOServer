@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --test test/*.test.js",
     "test:ui": "node ui-test.mjs",
     "fixture:terrain": "python3 scripts/generate-test-tif.py test/fixtures",
     "sync:cesium": "node scripts/sync-cesium.mjs"
