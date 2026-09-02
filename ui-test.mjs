@@ -78,7 +78,9 @@ await step('2 本机 IP 默认在白名单（capabilities.client）', async () =
   if (caps.features.authMode !== 'ip-whitelist') throw new Error('authMode: ' + caps.features.authMode);
   if (!caps.client || !caps.client.allowed) throw new Error('本机 IP 未授权: ' + JSON.stringify(caps.client));
   const ipNote = await page.textContent('#ipNote');
-  if (!/已在白名单/.test(ipNote)) throw new Error('ipNote 未显示已授权: ' + ipNote);
+  // UI 文案（2026-09「去除冗余描述」起）：已授权行是 "🟢 IP <b>…</b>"，不再写"已在白名单"
+  if (!/🟢 IP/.test(ipNote) || !ipNote.includes(caps.client.ip))
+    throw new Error('ipNote 未显示已授权: ' + ipNote);
 });
 
 /* ---------- 3. type switch ---------- */
@@ -86,7 +88,7 @@ await step('3 切换任务类型 → 表单组/输入区随类型重建', async 
   await page.selectOption('#type', 'tiles');
   await page.waitForSelector('#paramForm summary');
   const groups = await page.$$eval('#paramForm summary', (n) => n.map(x => x.textContent));
-  for (const w of ['投影 / CRS', '坐标原点', '地理配准', '简化', '3D Tiles'])
+  for (const w of ['投影', '坐标原点', '地理配准', '简化', '3D Tiles'])
     if (!groups.some(g => g.includes(w))) throw new Error('缺组: ' + w + '｜有: ' + groups.join('|'));
   await page.selectOption('#type', 'osgb');
   if (!(await page.$('#inputPath'))) throw new Error('osgb 未显示目录路径输入');
@@ -124,6 +126,14 @@ await step('5 表单上传 TIF → 提交 → 新行出现 → SSE 实时到 suc
   const logs = await page.textContent('#logBox');
   if (!/\[progress\] \d+\/\d+ \(\d+%\)/.test(logs))
     throw new Error('日志面板缺实时 [progress] 事件');
+  // 回归：实时行曾是 Element.append() 的字面文本——<span class=…> 包装标签原样露在日志里
+  // （"日志带 html 标签"），颜色类也从未真正生效。要求：不得有泄漏的 <span> 字面量（日志
+  // 正文若本身含 <…> 文本是允许的），且确实存在真实 span.t-prog / span.t-status 元素。
+  if (/<\/?span[ >]/.test(logs))
+    throw new Error('日志里泄漏了字面 <span> 包装标签: …' + logs.slice(-160));
+  const liveCls = await page.$$eval('#logBox span', (n) => n.map((x) => x.className));
+  if (!liveCls.some((c) => c.includes('t-prog')) || !liveCls.some((c) => c.includes('t-status')))
+    throw new Error('实时行不是真实 span 元素（缺 t-prog/t-status）: ' + liveCls.join('|'));
   // raw protocol lines live in run.log (SSE turns them into [progress] summaries by design)
   const { lines } = await (await fetch(`${BASE}/api/v1/jobs/${jobId}/log?tail=400`)).json();
   if (!lines.some(l => /^\[TerrainConverter\] Progress: \d+\/\d+/.test(l))
@@ -275,10 +285,30 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     await consolePage.keyboard.press('Escape');   // 提交弹出的日志模态框会遮住列表
     await consolePage.waitForSelector('#logModal', { state: 'hidden' });
   });
-  await step('17 点击任务 ID 复制 → Toast', async () => {
+  await step('17 点击任务 ID 复制 → Toast（如实：成功才说已复制，且带完整 ID）', async () => {
     await consolePage.waitForSelector('#jobs tr .jobId');
+    const uuid = await consolePage.getAttribute('#jobs tr .jobId', 'data-copy');
     await consolePage.click('#jobs tr .jobId');
-    await consolePage.waitForFunction(() => document.querySelectorAll('.toast').length > 0, null, { timeout: 4000 });
+    // 回归：剪贴板 API 只存在于安全上下文（https/localhost），经 http://IP 访问时没有
+    // navigator.clipboard——旧代码吞掉失败还弹"已复制"，纯误导。成功提示必须带上完整 ID。
+    await consolePage.waitForFunction((u) => {
+      const t = [...document.querySelectorAll('.toast')].find((x) => !x.classList.contains('err'));
+      return t && /已复制：/.test(t.textContent) && t.textContent.includes(u) && !/失败/.test(t.textContent);
+    }, uuid, { timeout: 4000 });
+    // 回归①：完整 36 位无空格 UUID 曾把 .toast 撑成 ~30px 细条（图标/文字/✕ 全溢出盒外、
+    // 超出视口）；回归②：盒子高度也曾被算成纯 padding 的 24px（折行的第二行文字伸出盒底）。
+    // 要求：盒子在视口内、宽高都贴着内容（宽≥200；高不能是 24px 那种纯边距值），子元素
+    // 上下左右都落在盒内。
+    await consolePage.waitForFunction(() => {
+      const t = [...document.querySelectorAll('.toast')].at(-1);
+      if (!t) return false;
+      const r = t.getBoundingClientRect();
+      if (r.left < 0 || r.right > innerWidth + 1 || r.width < 200 || r.height < 45) return false;
+      return [...t.children].every((k) => {
+        const kr = k.getBoundingClientRect();
+        return kr.width > 0 && kr.left >= r.left && kr.right <= r.right + 1 && kr.bottom <= r.bottom + 1;
+      });
+    }, null, { timeout: 4000 }).catch(() => { throw new Error('toast 未正确包裹提示内容（宽度/高度/内容溢出）'); });
   });
   await step('18 日志悬浮弹框：居中弹出 / 复制 / Esc 与遮罩关闭', async () => {
     await consolePage.click('#jobs tr [data-act="log"]');
