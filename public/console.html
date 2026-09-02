@@ -284,7 +284,6 @@
   <section class="panel">
     <div class="panelHead">
       <h3>任务列表</h3>
-      <span class="tag" id="autoTag">5 秒自动刷新</span>
       <button id="refreshBtn" class="linkBtn" style="margin-left:auto">⟳ 刷新</button>
     </div>
     <div class="stats" id="stats"></div>
@@ -368,7 +367,7 @@ const DESC = {
   terrain: 'DEM GeoTIFF → Cesium 地形瓦片',
   image: '正射影像 GeoTIFF → TMS 瓦片',
   geojson: 'GeoJSON → EPSG:4326',
-  mesh: '模型简化 / 格式转换（glb · obj · fbx）',
+  mesh: '模型分组简化 / 格式转换（glb · obj · fbx）',
   osgb: 'OSGB 倾斜摄影 → 3D Tiles',
 };
 const TYPE_CN = {
@@ -782,7 +781,7 @@ function syncJson() {
 $('#jsonGrp').querySelector('summary').addEventListener('click', () => {
   jsonManual = !jsonManual;
   $('#jsonBox').readOnly = !jsonManual;
-  $('#jsonModeLabel').textContent = jsonManual ? '编辑中 · 以此为准提交' : '预览（只读）';
+  $('#jsonModeLabel').textContent = jsonManual ? '编辑中 · 以此为准提交' : '预览';
   if (!jsonManual) { try { applyJsonToForm(JSON.parse($('#jsonBox').value)); } catch { /* keep form */ } }
 });
 function applyJsonToForm(p) { // best-effort form fill
