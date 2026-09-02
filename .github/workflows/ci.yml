@@ -24,10 +24,27 @@ jobs:
 
       # The suite drives a stub binary (test/fixtures/fake-mgo.sh) through the real
       # job pipeline, so no vcpkg/CMake/Assimp build is required here.
+      # Runner egress IPs are heavily rate-limited by the npm registry (observed:
+      # 93 packages took ~71s vs ~3s on a dev box, and npm 10.9 died of retry
+      # exhaustion mid-install). Fewer sockets + longer retries ride it out;
+      # --no-audit/--no-fund drop two extra registry round-trips.
       - name: Install dependencies
-        run: npm ci
+        id: install
+        run: npm ci --no-audit --no-fund --maxsockets=3 --fetch-retries=5 --fetch-retry-mintimeout=15000 --fetch-retry-maxtimeout=90000 2>&1 | tee /tmp/npm-ci.log
 
       - name: Test
-        run: npm test
+        id: test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee /tmp/test.log
 
       - run: node --version
+
+      # --- 临时诊断：失败时把日志尾部转成注解（可用 API 匿名读取），定位后移除 ---
+      - name: Report install failure (temporary)
+        if: failure() && steps.install.conclusion == 'failure'
+        run: tail -n 10 /tmp/npm-ci.log | sed 's/^/::error::/'
+
+      - name: Report test failure (temporary)
+        if: failure() && steps.test.conclusion == 'failure'
+        run: tail -n 10 /tmp/test.log | sed 's/^/::error::/'
