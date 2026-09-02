@@ -171,6 +171,9 @@
        background:var(--panel2); position:sticky; top:0; white-space:nowrap; }
   tbody tr { transition:background .12s; }
   tbody tr:hover { background:rgba(77,163,255,.05); }
+  /* 正在看日志的那一行：弹框遮住了列表，透出的高亮 + 关闭后还焦点，用来认回自己看的是哪个任务 */
+  tbody tr.cur { background:rgba(77,163,255,.09); box-shadow:inset 3px 0 0 var(--acc); }
+  tbody tr.cur .act button[data-act="log"] { border-color:var(--acc); background:rgba(77,163,255,.16); color:var(--fg); }
   td { min-width:0; }
   .jobId { font-family:ui-monospace,Consolas,monospace; font-size:12px; color:var(--dim);
            cursor:pointer; border-bottom:1px dashed var(--line2); }
@@ -205,17 +208,48 @@
   .empty .ic { font-size:30px; opacity:.6; }
   .empty p { margin:8px 0 2px; font-size:13px; }
 
-  /* ---------- log panel ---------- */
-  #logPanel { margin-top:14px; }
-  .logHead { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
-  .logHead h4 { margin:0; font-size:13px; font-weight:600; }
+  /* ---------- pager ---------- */
+  .pager { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:11px; font-size:12px; color:var(--dim); }
+  .pager:empty { display:none; }
+  .pager .pInfo { color:var(--dim2); font-variant-numeric:tabular-nums; }
+  .pager label { display:inline-flex; align-items:center; gap:6px; }
+  .pager select { width:auto; padding:4px 26px 4px 8px; font-size:12px; }
+  .pager .pBtns { margin-left:auto; display:flex; gap:5px; align-items:center; }
+  .pager button { min-width:30px; padding:4px 9px; margin:0; font-size:12px; line-height:1.5; border-radius:7px;
+                  cursor:pointer; background:var(--bg2); color:var(--dim); border:1px solid var(--line2); transition:.15s; }
+  .pager button:hover:not(:disabled) { border-color:var(--acc); color:var(--acc2); }
+  .pager button.on { background:rgba(77,163,255,.16); border-color:var(--acc); color:var(--fg); font-weight:600; cursor:default; }
+  .pager button:disabled { opacity:.35; cursor:default; }
+  .pager .dots { color:var(--dim2); padding:0 1px; }
+  .pager .newHint { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+                    border:1px solid rgba(77,163,255,.45); background:rgba(77,163,255,.12); color:var(--acc2);
+                    cursor:pointer; font-size:12px; }
+
+  /* ---------- 任务日志：悬浮模态弹框 ---------- */
+  .mono { font-family:ui-monospace,Consolas,monospace; }
+  .modal { position:fixed; inset:0; z-index:300; display:flex; align-items:center; justify-content:center;
+           padding:22px; background:rgba(6,9,14,.62); backdrop-filter:blur(3px); animation:mFade .16s ease-out; }
+  .modal[hidden] { display:none; }
+  .modal .mask { position:absolute; inset:0; cursor:zoom-out; }
+  .modal .dialog { position:relative; width:min(1080px,100%); max-height:min(84vh,880px); display:flex; flex-direction:column;
+                   background:var(--panel); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+                   box-shadow:0 26px 70px rgba(0,0,0,.6); animation:mPop .18s cubic-bezier(.2,.8,.3,1); }
+  .modal .dialog:focus { outline:none; }
+  @keyframes mFade { from { opacity:0; } }
+  @keyframes mPop { from { transform:translateY(12px) scale(.985); opacity:0; } }
+  body.locked { overflow:hidden; }
+
+  .logHead { display:flex; align-items:center; gap:10px; flex:none; padding:11px 15px;
+             background:var(--panel2); border-bottom:1px solid var(--line); }
+  .logHead h4 { margin:0; font-size:13.5px; font-weight:600; }
   .logHead .sp { margin-left:auto; display:flex; gap:6px; align-items:center; }
   .logHead button { margin:0; padding:4px 11px; font-size:12px; border-radius:7px; cursor:pointer;
                     background:transparent; color:var(--dim); border:1px solid var(--line2); transition:.15s; }
   .logHead button:hover { color:var(--acc2); border-color:var(--acc); }
-  #logBox { background:#0a0d12; border:1px solid var(--line); border-radius:10px; padding:11px 13px;
-            font:11.5px/1.6 ui-monospace,Consolas,monospace; height:260px; overflow:auto;
+  #logBox { flex:1; min-height:0; background:#0a0d12; padding:11px 13px;
+            font:11.5px/1.6 ui-monospace,Consolas,monospace; overflow:auto; overscroll-behavior:contain;
             white-space:pre-wrap; color:#a5b4c9; word-break:break-all; }
+  #logBox:focus-visible { outline:2px solid var(--acc); outline-offset:-2px; }
   #logBox .t-err { color:#ff9aa2; } #logBox .t-prog { color:var(--ok); } #logBox .t-status { color:var(--acc2); }
 
   /* ---------- toast ---------- */
@@ -239,6 +273,17 @@
     input[type=text], input[type=password], input[type=number], select, button { padding:11px 10px; }
     main { padding:14px 12px 30px; }
     .headRight .pill span.hide-sm { display:none; }
+    .modal { padding:8px; }
+    .modal .dialog { max-height:94vh; }
+    .logHead { padding:10px 12px; }
+    #logBox { font-size:11px; padding:9px 11px; }
+    .pager .pBtns { margin-left:0; width:100%; justify-content:flex-end; }
+    .pager button { padding:8px 12px; }
+    .pager select { padding:8px 26px 8px 10px; }
+    .logHead button { padding:8px 13px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .modal, .modal .dialog { animation:none; }
   }
 </style>
 </head>
@@ -293,19 +338,25 @@
         <tbody id="jobs"></tbody>
       </table>
     </div>
-    <div id="logPanel" hidden>
-      <div class="logHead">
-        <h4>任务日志</h4>
-        <span class="badge s-running mono" id="logJob" style="font-family:ui-monospace,Consolas,monospace"></span>
-        <span class="sp">
-          <button id="copyLogBtn" title="复制日志">⧉ 复制</button>
-          <button id="closeLogBtn">✕ 关闭</button>
-        </span>
-      </div>
-      <div id="logBox"></div>
-    </div>
+    <div class="pager" id="pager"></div>
   </section>
 </main>
+
+<!-- 任务日志：悬浮模态弹框（原先排在任务表末尾，50 行时点开根本看不见） -->
+<div class="modal" id="logModal" hidden>
+  <div class="mask" id="logMask"></div>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="logTitle" tabindex="-1" id="logDialog">
+    <div class="logHead">
+      <h4 id="logTitle">任务日志</h4>
+      <span class="badge s-running mono" id="logJob"></span>
+      <span class="sp">
+        <button id="copyLogBtn" title="复制全部日志到剪贴板">⧉ 复制</button>
+        <button id="closeLogBtn" title="关闭（Esc）">✕ 关闭</button>
+      </span>
+    </div>
+    <div id="logBox" role="log" tabindex="0" aria-label="任务日志输出（可用方向键滚动）"></div>
+  </div>
+</div>
 
 <div id="toasts"></div>
 
@@ -797,9 +848,18 @@ function applyJsonToForm(p) { // best-effort form fill
   }
 }
 
-/* ================ job list + SSE ================ */
-const jobs = new Map();
+/* ================ job list (分页) + SSE ================ */
+const jobs = new Map();   // 只装当前页
 let es = null;
+let logJobId = null;      // 弹框正在查看日志的任务（行高亮用）
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },   // 无痕模式别炸
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* 存不下就算了 */ } },
+};
+const PAGE_SIZES = [10, 20, 50];
+let pageSize = PAGE_SIZES.includes(+store.get('mgo.pageSize')) ? +store.get('mgo.pageSize') : 10;
+let page = 1, pages = 1, listTotal = 0;
+let prevTotal = null, pendingNew = 0;   // 停在非首页时新增的任务数 → "有新任务"提示
 const STATUS_CN = { queued: '排队中', running: '运行中', succeeded: '成功', failed: '失败', usage_error: '参数错误', canceled: '已取消' };
 const fmtPct = (j) => {
   const p = j.progress || {};
@@ -812,7 +872,7 @@ function row(j) {
   const viewer = j.viewerUrl
     ? `<a class="btn" href="${esc(j.viewerUrl)}" target="_blank" title="在查看器中打开">查看</a>` : '';
   const cancel = ['queued', 'running'].includes(j.status) ? `<button class="danger" data-act="cancel" title="取消任务">取消</button>` : '';
-  return `<tr data-id="${j.id}">
+  return `<tr data-id="${j.id}"${j.id === logJobId ? ' class="cur"' : ''}>
     <td><span class="jobId" data-copy="${j.id}" title="点击复制完整 ID">${j.id.slice(0, 8)}</span><span class="tRel">${fmtAgo(j.createdAt)}</span></td>
     <td><span class="typeCell" title="${esc(TYPE_CN[j.type] || j.type)}"><span class="typeIc">${ICONS[j.type] || ''}</span>${j.type}</span></td>
     <td><span class="badge s-${j.status}">${STATUS_CN[j.status] || j.status}</span></td>
@@ -827,9 +887,10 @@ function render() {
     : `<tr><td colspan="6"><div class="empty"><div class="ic">🗂</div><p>暂无任务</p>
         <span class="hint">左侧选择类型并上传文件，提交后进度实时显示在这里</span></div></td></tr>`;
   renderStats(arr);
+  renderPager();
 }
 function renderStats(arr) {
-  // 优先用服务端全量 byStatus，避免 50 条窗口外的计数丢失；metrics 不可用时退回本地统计
+  // 优先用服务端全量 byStatus，避免当前页之外的计数丢失；metrics 不可用时退回本地统计
   const c = jobStats
     ? { running: jobStats.running | 0, queued: jobStats.queued | 0, succeeded: jobStats.succeeded | 0, failed: jobStats.failed | 0 }
     : { running: 0, queued: 0, succeeded: 0, failed: 0, other: 0 };
@@ -839,27 +900,111 @@ function renderStats(arr) {
   s.innerHTML = [
     ['运行中', c.running, 'warn'], ['排队中', c.queued, 'dim'], ['成功', c.succeeded, 'ok'], ['失败', c.failed, 'err'],
   ].map(([t, n, k]) => `<span class="stat"><b style="color:var(--${k})">${n}</b>${t}</span>`).join('')
-    + `<span class="stat" style="margin-left:auto"${total > arr.length ? ` title="仅显示最近 ${arr.length} 条"` : ''}>共 ${total} 个任务</span>`;
+    + `<span class="stat" style="margin-left:auto"${listTotal > arr.length ? ` title="当前第 ${page}/${pages} 页"` : ''}>共 ${total} 个任务</span>`;
 }
-let jobsTotal = null;   // 服务端任务总数（列表仅拉最近一页）
-let jobStats = null;    // 服务端全量 byStatus（不受 50 条窗口限制）
-async function loadJobs() {
+let jobsTotal = null;   // 服务端任务总数（列表只拉当前页）
+let jobStats = null;    // 服务端全量 byStatus（不受分页窗口限制）
+let loading = null;     // 同一时刻只允许一次列表请求在飞（5s 轮询 + 手动刷新 + 操作后补拉会撞车）
+function loadJobs() {
+  if (loading) return loading;
+  loading = fetchPage().finally(() => { loading = null; });
+  return loading;
+}
+async function fetchPage() {
+  const offset = (page - 1) * pageSize;
   try {
     const [listR, mxR] = await Promise.all([
-      fetch('/api/v1/jobs?limit=50'),
+      fetch(`/api/v1/jobs?limit=${pageSize}&offset=${offset}`),
       fetch('/api/v1/metrics').catch(() => null),
     ]);
     if (!listR.ok) return;
     const o = await listR.json();
-    jobsTotal = o.total;
+    listTotal = Number.isFinite(+o.total) ? +o.total : o.items.length;
+    jobsTotal = listTotal;                                   // 先用列表权威总数兜底
+    pages = Math.max(1, Math.ceil(listTotal / pageSize));
+    if (page > pages) { page = pages; return fetchPage(); }   // 删完最后一页后越界：夹回末页
     if (mxR?.ok) {
       const mx = await mxR.json().catch(() => null);
       if (mx?.jobs) { jobStats = mx.jobs.byStatus ?? null; jobsTotal = mx.jobs.total ?? jobsTotal; }
     }
+    // 服务端为权威，整页替换：旧的"只 set 不清"在分页下会把别页的行留在表里
+    jobs.clear();
     o.items.forEach(j => jobs.set(j.id, j));
+    trackNew();
     render();
   } catch { /* 服务离线：由健康探针负责提示与重连 */ }
 }
+function trackNew() {   // 新增计数：停在首页直接刷进来看得到，停在后面页只提示不重排
+  if (page === 1) pendingNew = 0;
+  else if (prevTotal != null && listTotal > prevTotal) pendingNew += listTotal - prevTotal;
+  prevTotal = listTotal;
+}
+/** 停在第 2 页以后：定时刷新只探"有没有新任务"和统计条，不动正在看的那一页的行 */
+async function probeTotal() {
+  try {
+    const [o, mx] = await Promise.all([
+      fetch('/api/v1/jobs?limit=1').then((r) => r.json()),
+      fetch('/api/v1/metrics').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]);
+    const t = Number.isFinite(+o.total) ? +o.total : listTotal;
+    if (prevTotal != null && t < prevTotal) return loadJobs();   // 别处删了任务：当前页可能已空，老实重取
+    listTotal = t;
+    pages = Math.max(1, Math.ceil(listTotal / pageSize));
+    if (mx?.jobs) { jobStats = mx.jobs.byStatus ?? null; jobsTotal = mx.jobs.total ?? t; }
+    else jobsTotal = t;
+    trackNew();
+    renderStats([...jobs.values()]);   // 统计条保持实时，表格行不重排
+    renderPager();
+  } catch { /* 离线：健康探针负责 */ }
+}
+/* ---------------- pager ---------------- */
+function pageWindow(cur, n) {   // 1 … 4 5 [6] 7 8 … 20
+  const out = [];
+  for (let i = 1; i <= n; i++) {
+    if (i === 1 || i === n || Math.abs(i - cur) <= 1) out.push(i);
+    else if (out[out.length - 1] !== '…') out.push('…');
+  }
+  return out;
+}
+let pagerSig = '';
+function renderPager() {
+  const box = $('#pager');
+  if (!listTotal) { box.innerHTML = ''; pagerSig = ''; return; }
+  const sig = [page, pages, pageSize, listTotal, pendingNew].join('|');
+  if (sig === pagerSig && box.firstChild) return;   // 5s 轮询别重建 DOM（会把展开中的下拉打断）
+  pagerSig = sig;
+  const from = (page - 1) * pageSize + 1, to = Math.min(page * pageSize, listTotal);
+  const num = (p) => p === '…' ? '<span class="dots">…</span>'
+    : `<button data-page="${p}"${p === page ? ' class="on" aria-current="page"' : ''} title="第 ${p} 页">${p}</button>`;
+  const edge = (p, label, title, off) =>
+    `<button data-page="${p}" title="${title}"${off ? ' disabled' : ''}>${label}</button>`;
+  box.innerHTML = `<span class="pInfo">第 ${from}–${to} 条 / 共 ${listTotal} 条</span>
+    <label class="pInfo">每页<select id="pageSizeSel" title="每页显示条数">${
+      PAGE_SIZES.map((s) => `<option value="${s}"${s === pageSize ? ' selected' : ''}>${s}</option>`).join('')
+    }</select>条</label>
+    ${pendingNew ? `<button class="newHint" data-new="1" title="跳转到第 1 页">↑ ${pendingNew} 个新任务</button>` : ''}
+    <span class="pBtns" role="group" aria-label="分页">${
+      edge(1, '«', '首页', page === 1) + edge(page - 1, '‹', '上一页', page === 1)
+    }${pageWindow(page, pages).map(num).join('')}${
+      edge(page + 1, '›', '下一页', page === pages) + edge(pages, '»', '末页', page === pages)
+    }</span>`;
+}
+$('#pager').addEventListener('click', (e) => {
+  const hit = e.target.closest('[data-page],[data-new]');
+  if (!hit) return;
+  if (hit.dataset.new) { page = 1; pendingNew = 0; loadJobs(); return; }
+  const p = +hit.dataset.page;
+  if (!Number.isFinite(p) || p === page || p < 1 || p > pages) return;
+  page = p; pendingNew = 0;
+  loadJobs();
+});
+$('#pager').addEventListener('change', (e) => {
+  if (e.target.id !== 'pageSizeSel') return;
+  pageSize = +e.target.value || 10;
+  store.set('mgo.pageSize', pageSize);
+  page = 1; pendingNew = 0; pagerSig = '';
+  loadJobs();
+});
 $('#jobs').addEventListener('click', async (e) => {
   const btn = e.target.closest('button'); const idEl = e.target.closest('[data-copy]');
   if (idEl) { await navigator.clipboard?.writeText(idEl.dataset.copy).catch(() => {}); toast('任务 ID 已复制', 'info', 1800); return; }
@@ -873,7 +1018,12 @@ $('#jobs').addEventListener('click', async (e) => {
     } catch { toast('服务不可达，操作未执行', 'err'); return false; }
   };
   if (btn.dataset.act === 'cancel') await call(`/api/v1/jobs/${id}/cancel`, 'POST', '已提交取消请求', 'info');
-  if (btn.dataset.act === 'del') { if (await call(`/api/v1/jobs/${id}`, 'DELETE', '任务已删除')) jobs.delete(id); }
+  if (btn.dataset.act === 'del') {
+    if (await call(`/api/v1/jobs/${id}`, 'DELETE', '任务已删除')) {
+      jobs.delete(id);
+      if (id === logJobId) closeLog();   // 别把日志弹框留在已删除的任务上
+    }
+  }
   if (btn.dataset.act === 'log') openLog(id);
   loadJobs();
 });
@@ -885,14 +1035,44 @@ $('#copyLogBtn').onclick = async () => {
   toast('日志已复制', 'ok', 1800);
 };
 
+/* ---------------- 日志悬浮弹框 ---------------- */
+const logModal = $('#logModal');
+const logDialog = $('#logDialog');
+const logOpen = () => !logModal.hidden;
+const logBadge = (st) => { $('#logJob').className = 'badge mono s-' + (st || 'queued'); };
+const logTrigger = (id) => {
+  try { return document.querySelector(`#jobs tr[data-id="${CSS.escape(id)}"] button[data-act="log"]`); }
+  catch { return null; }
+};
+function toggleModalChrome(on) {
+  const b = document.body;
+  if (on) {
+    const gap = window.innerWidth - document.documentElement.clientWidth;   // 先量滚动条宽度再锁
+    b.style.paddingRight = gap > 0 ? `${gap}px` : '';
+    b.classList.add('locked');
+  } else {
+    b.classList.remove('locked');
+    b.style.paddingRight = '';
+  }
+  // 背景整体 inert：不进 Tab 序、读屏也不播（不支持该属性的浏览器忽略即可，焦点圈仍由 keydown 兜住）
+  for (const n of b.children) if (n.tagName !== 'SCRIPT' && n !== logModal && n.id !== 'toasts') n.inert = on;
+}
+
 async function openLog(id) {
-  $('#logPanel').hidden = false; $('#logJob').textContent = '#' + id.slice(0, 8);
+  logJobId = id;
+  logModal.hidden = false;
+  toggleModalChrome(true);
+  $('#logJob').textContent = '#' + id.slice(0, 8);
+  logBadge(jobs.get(id)?.status);   // 徽章跟着任务真实状态走，不再恒为"运行中"黄
   $('#logBox').textContent = '';
   if (es) { es.close(); es = null; }
+  render();                                     // 标记正在看日志的行
+  logDialog.focus({ preventScroll: true });     // 键盘/Esc 立刻可用
   // render history FIRST, then attach EventSource — otherwise a late fetch
   // callback clobbers live [progress] lines already appended (was a real race)
   try {
-    const o = await (await fetch(`/api/v1/jobs/${id}/log?tail=120`)).json();
+    // 弹框比原来的内嵌面板高得多，历史行数相应放宽（服务端 tail 上限 2000）
+    const o = await (await fetch(`/api/v1/jobs/${id}/log?tail=300`)).json();
     $('#logBox').textContent = (o.lines || []).join('\n') + '\n—— 以下为实时日志 ——\n';
   } catch { $('#logBox').textContent = '—— 实时日志 ——\n'; }
   scroll();
@@ -910,10 +1090,33 @@ async function openLog(id) {
   es.addEventListener('status', (m) => {
     const d = JSON.parse(m.data); const j = jobs.get(id);
     if (j) { j.status = d.status; if (d.artifacts) { j.artifacts = d.artifacts; j.viewerUrl = d.viewerUrl; } render(); }
+    logBadge(d.status);
     $('#logBox').append(`<span class="t-status">[status] ${esc(d.status)}</span>\n`); scroll();
   });
 }
-function closeLog() { $('#logPanel').hidden = true; if (es) { es.close(); es = null; } }
+function closeLog() {
+  const id = logJobId;
+  logModal.hidden = true;
+  logJobId = null;
+  toggleModalChrome(false);
+  render();
+  if (es) { es.close(); es = null; }
+  // 弹框开着时暂停了轮询，关掉补一次；行会被刷新重建，所以等它落地后再按 id 还焦点
+  loadJobs().then(() => { if (!logOpen()) logTrigger(id)?.focus(); });
+}
+$('#logMask').onclick = closeLog;                 // 点遮罩关闭
+document.addEventListener('keydown', (e) => {     // Esc 全局兜底（焦点在弹框内任何位置都关得掉）
+  if (e.key === 'Escape' && logOpen()) { e.preventDefault(); closeLog(); }
+});
+logDialog.addEventListener('keydown', (e) => {    // Tab 焦点圈在弹框里，不会跑到被遮住的列表后面
+  if (e.key !== 'Tab') return;
+  const f = [...logDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((n) => !n.disabled && n.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 const scroll = () => { const b = $('#logBox'); b.scrollTop = b.scrollHeight; };
 
 /* ================ submit ================ */
@@ -985,7 +1188,10 @@ $('#submit').onclick = async () => {
       toast(`提交失败：${body?.error?.message || 'HTTP ' + res.status}`, 'err', 5000);
       return;
     }
-    jobs.set(body.id, body); if (jobsTotal != null) jobsTotal += 1; render(); openLog(body.id);
+    // 新任务只可能出现在第 1 页：先回到首页再乐观插入，随后拉服务端首页覆盖本地
+    page = 1; pendingNew = 0;
+    jobs.set(body.id, body); if (jobsTotal != null) jobsTotal += 1; render();
+    openLog(body.id); loadJobs();
     showMsg(`任务已提交：${body.id.slice(0, 8)}`, 'ok');
     toast('任务已提交，正在处理…', 'ok');
   } finally {
@@ -1028,7 +1234,10 @@ setInterval(async () => {
   // 每轮都探测健康：loadJobs 的失败被静默吞掉，不能据它判断在线
   const wasOffline = !$('#health').classList.contains('online');
   const ok = await probeCaps();
-  if (ok && (wasOffline || $('#logPanel').hidden)) loadJobs();
+  if (!ok) return;                                  // 仍离线：健康探针已负责提示与重试
+  if (logOpen()) return;                            // 弹框开着不打扰列表，关闭时 closeLog 会补一次
+  if (wasOffline || page === 1) loadJobs();         // 刚恢复在线 / 停在首页：整页重取
+  else probeTotal();                                // 停在后面的页：只探新增，不重排正在看的内容
 }, 5000);
 </script>
 </body>

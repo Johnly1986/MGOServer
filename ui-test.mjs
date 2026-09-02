@@ -129,6 +129,9 @@ await step('5 表单上传 TIF → 提交 → 新行出现 → SSE 实时到 suc
   if (!lines.some(l => /^\[TerrainConverter\] Progress: \d+\/\d+/.test(l))
     || !lines.some(l => /^\[TerrainConverter\] Done: \d+\/\d+/.test(l)))
     throw new Error('run.log 缺原始 Progress:/Done: 协议行');
+  // 提交后自动弹出模态日志框：收掉，否则会挡住后续步骤对表单的操作
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#logModal', { state: 'hidden' });
   if (realErrs(page).length) throw new Error('提交后 JS 错误: ' + realErrs(page).join(' ;; '));
 });
 
@@ -269,18 +272,73 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     await consolePage.click('#submit');
     await consolePage.waitForFunction(() => document.querySelectorAll('.toast').length > 0, null, { timeout: 8000 });
     await consolePage.waitForFunction(() => document.querySelectorAll('.toast').length === 0, null, { timeout: 8000 });
+    await consolePage.keyboard.press('Escape');   // 提交弹出的日志模态框会遮住列表
+    await consolePage.waitForSelector('#logModal', { state: 'hidden' });
   });
   await step('17 点击任务 ID 复制 → Toast', async () => {
     await consolePage.waitForSelector('#jobs tr .jobId');
     await consolePage.click('#jobs tr .jobId');
     await consolePage.waitForFunction(() => document.querySelectorAll('.toast').length > 0, null, { timeout: 4000 });
   });
-  await step('18 复制日志按钮', async () => {
+  await step('18 日志悬浮弹框：居中弹出 / 复制 / Esc 与遮罩关闭', async () => {
     await consolePage.click('#jobs tr [data-act="log"]');
-    await consolePage.waitForSelector('#copyLogBtn');
+    await consolePage.waitForSelector('#logModal .dialog', { state: 'visible' });
+    // 弹框必须是悬浮层且整体在视口内，不依赖页面滚动位置
+    // （回归：它曾排在上百行表格之后，点开在视口外，看起来就是"按钮点了没反应"；
+    //   waitForSelector 只看元素可见，管不了在不在视口内，所以必须显式断言）
+    await consolePage.waitForFunction(() => {
+      const m = document.querySelector('#logModal');
+      const r = m.querySelector('.dialog').getBoundingClientRect();
+      return getComputedStyle(m).position === 'fixed'
+        && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
+    }, null, { timeout: 4000 }).catch(() => { throw new Error('日志弹框未悬浮在视口内'); });
+    if (!(await consolePage.$eval('#jobs tr[data-id]', (n) => n.classList.contains('cur'))))
+      throw new Error('正在看日志的行缺高亮标记');
+    if (!(await consolePage.evaluate(() => document.body.classList.contains('locked'))))
+      throw new Error('弹框打开时背景未锁滚动');
     await consolePage.click('#copyLogBtn');
     await consolePage.waitForFunction(() => document.querySelectorAll('.toast').length > 0, null, { timeout: 4000 });
-    await consolePage.click('#closeLogBtn');
+    await consolePage.keyboard.press('Escape');
+    await consolePage.waitForSelector('#logModal', { state: 'hidden' });
+    await consolePage.waitForFunction(() => !document.body.classList.contains('locked')
+      && document.querySelectorAll('#jobs tr.cur').length === 0, null, { timeout: 4000 });
+    await consolePage.click('#jobs tr [data-act="log"]');   // 点遮罩也要能关
+    await consolePage.waitForSelector('#logModal .dialog', { state: 'visible' });
+    await consolePage.mouse.click(6, 6);
+    await consolePage.waitForSelector('#logModal', { state: 'hidden' });
+  });
+
+  await step('18b 任务列表分页：翻页不重叠、每页条数、末页夹取', async () => {
+    const { total } = await (await fetch(BASE + '/api/v1/jobs?limit=1')).json();
+    if (total < 21) skip(`任务总数 ${total} < 21，不足以验证分页`);
+    const rows = () => consolePage.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id));
+    await consolePage.selectOption('#pageSizeSel', '10');
+    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length === 10,
+      null, { timeout: 8000 });
+    if (!new RegExp(`共 ${total} 条`).test(await consolePage.textContent('#pager')))
+      throw new Error('分页条缺总数：' + (await consolePage.textContent('#pager')).trim());
+    const p1 = await rows();
+    await consolePage.click('#pager [data-page="2"]');
+    await consolePage.waitForFunction((old) => {
+      const now = [...document.querySelectorAll('#jobs tr[data-id]')].map((x) => x.dataset.id);
+      return now.length === 10 && !now.some((id) => old.includes(id));
+    }, p1, { timeout: 8000 });
+    if ((await rows()).some((id) => p1.includes(id))) throw new Error('第 2 页与第 1 页内容重叠');
+    if (!(await consolePage.$eval('#pager [data-page="2"]', (n) => n.classList.contains('on'))))
+      throw new Error('当前页码未高亮');
+    await consolePage.selectOption('#pageSizeSel', '20');   // 换每页条数应回到第 1 页
+    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length === 20
+      && document.querySelector('#pager [data-page="1"].on'), null, { timeout: 8000 });
+    await consolePage.click('#pager [title="末页"]');        // 末页只装得下剩下的尾巴
+    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length < 20,
+      null, { timeout: 8000 });
+    if (!(await consolePage.$eval('#pager [title="下一页"]', (n) => n.disabled)))
+      throw new Error('末页的"下一页"未禁用');
+    if ((await rows()).length + (Math.ceil(total / 20) - 1) * 20 !== total)
+      throw new Error('末页行数与总数不自洽');
+    await consolePage.selectOption('#pageSizeSel', '10');   // 复原：后续步骤按默认页大小断言
+    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length === 10,
+      null, { timeout: 8000 });
   });
   await step('19 状态徽章为中文文案 + 状态类', async () => {
     const txt = await consolePage.$eval('#jobs tr .badge', (n) => n.textContent);
