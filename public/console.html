@@ -425,7 +425,7 @@ const UI = {
       F('normals', 'bool', '导出顶点法线', { def: true, hint: '输出法线数据，地形光照更平滑（体积略增大）' }),
     ]},
     gOrigin('坐标原点'), gProj(), gGeoref(),
-    gSimplify({ local: false, errPh: '留空=0.001（归一化）' }),
+    gSimplify({ local: false, errPh: '留空=0.001' }),
   ]),
   image: () => [gProj()],
   geojson: () => ([{ name: '转换参数（输出默认转经纬度）', fields: [
