@@ -48,7 +48,6 @@ Linux x86-64 开箱即用——引擎二进制已随仓库提供，装好 Node �
 ```bash
 git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
 npm ci
-sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data
 ```
 
 构建产物 [MGO] (https://github.com/Johnly1986/MGO/releases) （`MGOConsole` 及其 `.so`，或 `MGOConsole.exe` 及其 `.dll`）按系统放进本仓库
