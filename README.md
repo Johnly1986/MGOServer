@@ -113,7 +113,7 @@ npm i cesium@1.111 --no-save && npm run sync:cesium
 
 ## 📄 许可
 
-Apache-2.0，无论是用于商业用途还是非商业用途都是免费的；第三方依赖声明见
+[Apache License 2.0](LICENSE)，无论是用于商业用途还是非商业用途都是免费的；第三方依赖声明见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 平台支持：MGO 引擎以 MSVC 2022（Windows）与 GCC 9+（Linux）构建验证。
