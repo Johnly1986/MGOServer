@@ -23,4 +23,7 @@ ui-test-results/
 .DS_Store
 .idea/
 .vscode/
-test/
+test/**/*.obj
+test/**/*.tif
+test/**/*.zip
+test/**/*.log
