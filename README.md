@@ -26,6 +26,9 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
   需引擎以 `MGO_WITH_OSG` 编译）
 - ✅ 输入覆盖 FBX / OBJ / glTF / glb / DAE / 3DS / PLY / STL、GeoTIFF、OSGB 目录或 ZIP；
   输出自带 `tileset.json` / `layer.json` / `tilemapresource.xml` 描述文件，Cesium URL 直接加载
+- ✅ `tiles` 多文件转换：一次提交多个模型、共用同一套转换参数，逐个切片后由
+  [3d-tiles-tools](https://github.com/CesiumGS/3d-tiles-tools) 合并为统一 `tileset.json`；
+  单/多文件目录逻辑一致——每个输入产出 `out/<名>/`，统一入口恒为 `out/tileset.json`
 - ✅ 切片跑在原生 C++ 进程，terrain 出瓦多线程并行；简化基于扩展版 meshoptimizer，
   锁定瓦片边界不留缝；服务层任务排队限流、可取消、超时兜底、成果按 TTL 自动清理
 - ✅ 坐标系引擎：EPSG / WKT / `+proj` / `.prj` 定义投影，7 参数 Helmert、单锚点、
@@ -69,9 +72,14 @@ curl http://127.0.0.1:8080/api/v1/health    # 返回 {"status":"ok",…} 即启�
 # multipart 上传
 curl -F 'options={"type":"terrain"}' -F file=@dem.tif http://127.0.0.1:8080/api/v1/jobs
 
-# 或引用服务器本地文件（需 MGO_ALLOW_LOCAL_PATH=1）
+# tiles 多文件：多个 -F file=…，options 里的转换参数对所有文件统一生效，
+# 结果自动合并为 out/tileset.json（3d-tiles-tools）
+curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' \
+  -F file=@tower.fbx -F file=@podium.obj http://127.0.0.1:8080/api/v1/jobs
+
+# 或引用服务器本地文件（需 MGO_ALLOW_LOCAL_PATH=1；tiles 支持 inputPaths 多路径）
 curl -H 'Content-Type: application/json' \
-  -d '{"type":"tiles","inputPath":"/data/city.fbx","proj":{"crs":"EPSG:4526"}}' \
+  -d '{"type":"tiles","inputPaths":["/data/city.fbx","/data/park.obj"],"proj":{"crs":"EPSG:4526"}}' \
   http://127.0.0.1:8080/api/v1/jobs
 ```
 

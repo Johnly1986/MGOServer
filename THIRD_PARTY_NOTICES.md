@@ -12,6 +12,7 @@ It stands on the following third-party software.
 | [zod](https://zod.dev) | MIT | job option schemas |
 | [yauzl](https://github.com/thejoshwolfe/yauzl) | MIT | streamed, bomb-safe ZIP extraction for OSGB uploads |
 | [tree-kill](https://github.com/sapertree/tree-kill) | MIT | killing an `mgo` process tree on cancel/timeout |
+| [3d-tiles-tools](https://github.com/CesiumGS/3d-tiles-tools) | Apache-2.0 | `mergeJson` step combining multi-file tiles outputs into one unified `tileset.json` (invoked as a CLI, not imported) |
 
 `devDependencies`: [playwright](https://playwright.dev) (Apache-2.0) for the page-level
 suite, [yazl](https://github.com/thejoshwolfe/yazl) (MIT) to build the test archives.

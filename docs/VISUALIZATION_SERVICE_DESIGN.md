@@ -337,15 +337,29 @@ sequenceDiagram
 ```
 POST /api/v1/jobs            Content-Type: multipart/form-data
   file:      <二进制上传>            # 单文件类：fbx/obj/tif/geojson/glTF…
+  file:      <可选第二个模型>         # 仅 tiles：可重复多个 file，统一参数逐个转换后合并
   options:   {"type":"tiles", …}     # JSON 字符串（见各类型 schema）
 ```
 
 ```
 POST /api/v1/jobs            Content-Type: application/json     # 同机直读模式
   { "type": "tiles", "inputPath": "D:/proj/roadbed.fbx", …params }
+  { "type": "tiles", "inputPaths": ["D:/a.fbx","D:/b.obj"], …params }  # 仅 tiles 多文件
 ```
 
-`inputPath` 与 `file` 二选一；`inputPath` 默认关闭（`MGO_ALLOW_LOCAL_PATH=1` 才启用），并限制在 `MGO_ALLOWED_ROOTS` 白名单目录内（防任意文件读取）。
+`inputPath`/`inputPaths` 与 `file` 二选一；本地路径默认关闭（`MGO_ALLOW_LOCAL_PATH=1` 才启用），并限制在 `MGO_ALLOWED_ROOTS` 白名单目录内（防任意文件读取）。
+
+**tiles 多文件（统一参数 + 合并）**：`type:"tiles"` 接受多个输入（multipart 重复 `file`，或 JSON
+`inputPaths`）。所有输入共用 options 里同一套转换参数（投影/原点/配准/简化/LOD… 对每个文件生效），
+服务端为每个输入建独立子目录 `out/<stem>/` 跑一次 `mgo tiles`，全部成功后用
+[3d-tiles-tools](https://github.com/CesiumGS/3d-tiles-tools) 的 `mergeJson` 合并出统一入口
+`out/tileset.json`（root.children 以相对 uri 引用各 `out/<stem>/tileset.json`，Cesium 照常流式加载）。
+单文件与多文件走**完全相同**的目录逻辑（单文件即 N=1 的合并），最终产物 URL 不变（`out/tileset.json`）。
+- 重名输入自动改键：`a.fbx` + `a.fbx` → `out/a/`、`out/a_2/`（去重后的上传文件名 `a.fbx`/`a_2.fbx`）。
+- 输入数量上限 `MGO_MAX_INPUT_FILES`（默认 32）；合并工具路径可用 `MGO_3D_TILES_TOOLS` 覆盖。
+- 任一步失败即任务失败，已完成的 `out/<stem>/` 产物保留可查；`capabilities.features.multiFileTiles`
+  报告合并工具是否可用。
+- 进度：各输入独立映射到 0–98%，合并阶段 99→100%（`phase:"merge"`）。
 
 #### 6.3.2 公共参数对象（跨类型复用）
 
@@ -385,7 +399,8 @@ POST /api/v1/jobs            Content-Type: application/json     # 同机直读�
 }
 ```
 
-成功产物：`out/tileset.json`（role=`3dtiles`）。
+成功产物：统一入口 `out/tileset.json`（role=`3dtiles`）。每个输入落在自己的 `out/<stem>/tileset.json`；
+单文件与多文件目录逻辑一致（多文件见 §6.3.1，用 3d-tiles-tools `mergeJson` 合并）。
 
 #### 6.3.4 `type: "terrain"`（→ `mgo terrain`）
 

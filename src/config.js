@@ -84,15 +84,29 @@ function envTrustProxy() {
   return /^\d+$/.test(v) ? Number(v) : v;
 }
 
+/** Locate the 3d-tiles-tools CLI script used to merge multi-file tiles
+ *  outputs into one unified tileset.json.  Search order:
+ *    1. MGO_3D_TILES_TOOLS — explicit path (any executable or .js/.mjs script)
+ *    2. <repo>/node_modules/3d-tiles-tools/build/src/cli.mjs (npm dependency)
+ *  A .js/.mjs/.cjs target is spawned through the current node binary. */
+export function findTilesToolsCli(explicit) {
+  if (explicit) return explicit;
+  const p = path.join(PKG_ROOT, 'node_modules', '3d-tiles-tools', 'build', 'src', 'cli.mjs');
+  try { if (fs.existsSync(p)) return p; } catch { /* ignore */ }
+  return null;
+}
+
 export function loadConfig(overrides = {}) {
   const base = {
     host: env('MGO_HOST', '0.0.0.0'),
     port: envInt('MGO_PORT', 8080),
     binary: findMgoBinary(env('MGO_BINARY', undefined)),
+    tilesToolsCli: findTilesToolsCli(env('MGO_3D_TILES_TOOLS', undefined)),
     workspaceRoot: path.resolve(PKG_ROOT, env('MGO_WORKSPACE', 'workspace')),
     corsOrigin: env('MGO_CORS_ORIGIN', '*'),
     uploadMaxBytes: envInt('MGO_UPLOAD_MAX_BYTES', 2 * 1024 ** 3),
     uploadMaxFiles: envInt('MGO_UPLOAD_MAX_FILES', 5000),
+    maxInputFiles: envInt('MGO_MAX_INPUT_FILES', 32), // tiles multi-file cap
     minFreeGb: envInt('MGO_MIN_FREE_GB', 10),
     maxConcurrentJobs: envInt('MGO_MAX_CONCURRENT_JOBS', 1),
     queueMax: envInt('MGO_QUEUE_MAX', 100),

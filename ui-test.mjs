@@ -183,10 +183,57 @@ await step('8 viewer 深链加载真实 quantized-mesh 地形（WebGL 渲染 + �
   await vp.close();   // free the WebGL render loop — leaked viewers starve later steps
 });
 
+/* ---------- 8b. tiles multi-file through the console ---------- */
+const OBJ_A = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'test', 'fixtures', 'cubeA.obj');
+const OBJ_B = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'test', 'fixtures', 'cubeB.obj');
+let multiJobId;
+await step('8b tiles 多文件：统一参数转换 + 合并 tileset（console 上传两个模型）', async () => {
+  const before = new Set(await page.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id)));
+  await page.selectOption('#type', 'tiles');
+  await page.waitForSelector('#inputArea input#file[multiple]');
+  await page.setInputFiles('#file', [OBJ_A, OBJ_B]);
+  await page.waitForFunction(() => /2 个文件/.test(document.querySelector('#dropMeta').textContent),
+    null, { timeout: 5000 });
+  await page.click('#submit');
+  multiJobId = await page.waitForFunction((old) => {
+    const tr = [...document.querySelectorAll('#jobs tr[data-id]')]
+      .find((x) => !old.includes(x.dataset.id));
+    return tr ? tr.dataset.id : null;
+  }, [...before], { timeout: 15000 }).then((h) => h.jsonValue());
+  await page.waitForFunction(() => /\[status\] succeeded/.test(document.querySelector('#logBox').textContent),
+    null, { timeout: 180000 });
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#logModal', { state: 'hidden' });
+  const dto = await (await fetch(`${BASE}/api/v1/jobs/${multiJobId}`)).json();
+  if (dto.status !== 'succeeded') throw new Error('状态 ' + dto.status + ' ' + JSON.stringify(dto.error));
+  if (dto.inputName !== 'cubeA.obj (+1)') throw new Error('inputName: ' + dto.inputName);
+  const url = dto.artifacts.find((a) => a.role === '3dtiles').url;
+  if (url !== `/ws/${multiJobId}/out/tileset.json`) throw new Error('统一入口: ' + url);
+  const merged = await (await fetch(BASE + url)).json();
+  const uris = merged.root.children.map((c) => c.content.uri);
+  if (uris.length !== 2 || !uris.includes('cubeA/tileset.json') || !uris.includes('cubeB/tileset.json'))
+    throw new Error('合并 children 不符: ' + JSON.stringify(uris));
+  // 目录逻辑统一：每个输入各有 out/<stem>/tileset.json，且可经数据面访问
+  for (const u of uris) {
+    const r = await fetch(`${BASE}/ws/${multiJobId}/out/${u}`);
+    if (r.status !== 200) throw new Error(u + ' → ' + r.status);
+  }
+  const { lines } = await (await fetch(`${BASE}/api/v1/jobs/${multiJobId}/log?tail=200`)).json();
+  const argvs = lines.filter((l) => l.startsWith('[Service] argv: tiles'));
+  if (argvs.length !== 2) throw new Error('每个输入应有独立 argv 记录: ' + argvs.length);
+  if (!/ -i \S+\/input\/cubeA\.obj -o \S+\/out\/cubeA( |$)/.test(argvs[0])
+    || !/ -i \S+\/input\/cubeB\.obj -o \S+\/out\/cubeB( |$)/.test(argvs[1]))
+    throw new Error('逐输入独立转换目录不符: ' + argvs.join(' ;; '));
+  if (argvs[0].replace(/-i \S+ -o \S+/, '') !== argvs[1].replace(/-i \S+ -o \S+/, ''))
+    throw new Error('两次转换参数不一致（应统一）');
+  if (!lines.some((l) => l.includes('merging 2 tileset(s) with 3d-tiles-tools mergeJson')))
+    throw new Error('未见合并步骤日志');
+});
+
 /* ---------- 9. viewer: real 3D Tiles ---------- */
-await step('9 viewer 加载真实 3D Tiles tileset（.prj+.cps 配准产物）', async () => {
+await step('9 viewer 加载真实 3D Tiles tileset（优先 8b 的合并产物）', async () => {
   const list = await (await fetch(`${BASE}/api/v1/jobs?limit=200`)).json();
-  const t = list.items.find(j => j.type === 'tiles' && j.status === 'succeeded');
+  const t = list.items.find((j) => j.type === 'tiles' && j.status === 'succeeded');
   if (!t) skip('无成功 tiles 任务可复用 — 需先跑过一例真实模型（../MGO/Data 私有回归数据不随仓库分发）');
   const url = t.artifacts.find(a => a.role === '3dtiles').url;
   const vp = await newPage('/viewer.html?asset=' + encodeURIComponent(url) + '&type=3dtiles');
@@ -195,6 +242,14 @@ await step('9 viewer 加载真实 3D Tiles tileset（.prj+.cps 配准产物）',
   await vp.screenshot({ path: '/tmp/ui_tiles.png' });
   const errs = realErrs(vp).filter(e => !/404|not found|Failed to load|tile/i.test(e));
   if (errs.length) throw new Error('tiles 渲染 JS 错误: ' + errs.join(' ;; '));
+  // 合并 tileset 的每个外部子瓦片集都必须能被 Cesium 解析请求到（HTTP 200）
+  if (t.id === multiJobId) {
+    const merged = await (await fetch(BASE + url)).json();
+    for (const c of merged.root.children) {
+      const r = await fetch(`${BASE}${url.replace('/tileset.json', '/')}${c.content.uri}`);
+      if (r.status !== 200) throw new Error('外部子瓦片集不可达: ' + c.content.uri);
+    }
+  }
   await vp.close();
 });
 

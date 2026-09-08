@@ -444,7 +444,7 @@ const showMsg = (text, kind) => {
 /* ================ field spec ================ */
 const ICONS = { tiles: '🏗', terrain: '⛰', image: '🛰', geojson: '📍', mesh: '🧊', osgb: '📷' };
 const DESC = {
-  tiles: '模型（FBX/OBJ 等）→ 3D Tile，可配准、简化',
+  tiles: '模型（FBX/OBJ 等，支持多文件）→ 3D Tile，可配准、简化；多文件统一参数转换后自动合并 tileset.json',
   terrain: 'DEM GeoTIFF → Cesium 地形瓦片',
   image: '正射影像 GeoTIFF → TMS 瓦片',
   geojson: 'GeoJSON → EPSG:4326',
@@ -604,11 +604,14 @@ function renderInputArea(type) {
     }
     return;
   }
+  // tiles 支持多文件：统一转换参数逐个转换，服务端再用 3d-tiles-tools 合并为
+  // 一个 tileset.json；其余类型仍是单文件
+  const multi = type === 'tiles';
   const drop = el('div', { class: 'drop' },
-    el('input', { type: 'file', id: 'file', accept: fileAccept(type) }),
+    el('input', { type: 'file', id: 'file', accept: fileAccept(type), multiple: multi }),
     el('div', { class: 'dropInner' },
       el('span', { class: 'ic' }, '📁'),
-      el('span', { class: 'txt' }, '点击选择或拖拽文件到此处'),
+      el('span', { class: 'txt' }, multi ? '点击选择或拖拽多个模型到此处（统一参数转换后自动合并）' : '点击选择或拖拽文件到此处'),
       el('span', { class: 'meta', id: 'dropMeta' }, '')));
   const fi = drop.querySelector('input');
   fi.onchange = () => updateDrop(fi);
@@ -616,22 +619,27 @@ function renderInputArea(type) {
   drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
   drop.addEventListener('drop', (e) => {
     e.preventDefault(); drop.classList.remove('drag');
-    const f = e.dataTransfer.files?.[0];
-    if (f) { try { const dt = new DataTransfer(); dt.items.add(f); fi.files = dt.files; fi.dispatchEvent(new Event('change')); } catch { /* fallback */ } }
+    const fs = multi ? [...(e.dataTransfer?.files ?? [])] : [...(e.dataTransfer?.files ?? [])].slice(0, 1);
+    if (fs.length) {
+      try { const dt = new DataTransfer(); fs.forEach((f) => dt.items.add(f)); fi.files = dt.files; fi.dispatchEvent(new Event('change')); } catch { /* fallback */ }
+    }
   });
-  area.append(label('输入文件'), drop);
+  area.append(label(multi ? '输入文件（可多选）' : '输入文件'), drop);
   if (caps?.features?.localPathInput) {
-    area.append(label('或服务器本地路径（免上传）'));
+    area.append(label(multi ? '或服务器本地路径（免上传，多个用英文逗号分隔）' : '或服务器本地路径（免上传）'));
     area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '/data/models/x.fbx' }));
   }
 }
 function updateDrop(fi) {
   const meta = $('#dropMeta');
-  const f = fi.files?.[0];
   if (!meta) return;
-  if (!f) { meta.textContent = ''; return; }
-  const kb = f.size >= 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB';
-  meta.textContent = `${f.name} · ${kb}`;
+  const fs = fi.files ? [...fi.files] : [];
+  if (!fs.length) { meta.textContent = ''; return; }
+  const size = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+  if (fs.length === 1) { meta.textContent = `${fs[0].name} · ${size(fs[0].size)}`; return; }
+  const total = fs.reduce((s, f) => s + f.size, 0);
+  const shown = fs.slice(0, 3).map((f) => f.name).join('、');
+  meta.textContent = `${fs.length} 个文件 · ${size(total)}（${shown}${fs.length > 3 ? '…' : ''}）`;
 }
 function updateOsgbDir(fi) {
   const meta = $('#osgbMeta');
@@ -1110,21 +1118,32 @@ async function openLog(id) {
   } catch { $('#logBox').textContent = '—— 实时日志 ——\n'; }
   scroll();
   es = new EventSource(`/api/v1/jobs/${id}/events`);
+  // 实时行必须是真实 <span> 元素（Element.append 收到字符串只会当纯文本插入，
+  // 曾导致 <span …> 包装标签原样露在日志里、颜色类从未生效）
+  const logSpan = (cls, text) => {
+    const box = $('#logBox');
+    if (cls) {
+      const s = document.createElement('span');
+      s.className = cls;
+      s.textContent = text;
+      box.append(s, '\n');
+    } else box.append(`${text}\n`);
+  };
   es.addEventListener('log', (m) => {
     const line = JSON.parse(m.data).line;
-    const cls = /\[(?:Progress|Done)\]/.test(line) ? ' t-prog' : (/^Error|错误|warning/i.test(line) ? ' t-err' : '');
-    $('#logBox').append(`<span class="${cls}">${esc(line)}</span>\n`); scroll();
+    const cls = /\[(?:Progress|Done)\]/.test(line) ? 't-prog' : (/^Error|错误|warning/i.test(line) ? 't-err' : '');
+    logSpan(cls, line); scroll();
   });
   es.addEventListener('progress', (m) => {
     const d = JSON.parse(m.data);
     const j = jobs.get(id); if (j) { j.progress = d.data; j.status = 'running'; render(); }
-    $('#logBox').append(`<span class="t-prog">[progress] ${d.data.done}/${d.data.total} (${d.data.percent}%)</span>\n`); scroll();
+    logSpan('t-prog', `[progress] ${d.data.done}/${d.data.total} (${d.data.percent}%)`); scroll();
   });
   es.addEventListener('status', (m) => {
     const d = JSON.parse(m.data); const j = jobs.get(id);
     if (j) { j.status = d.status; if (d.artifacts) { j.artifacts = d.artifacts; j.viewerUrl = d.viewerUrl; } render(); }
     logBadge(d.status);
-    $('#logBox').append(`<span class="t-status">[status] ${esc(d.status)}</span>\n`); scroll();
+    logSpan('t-status', `[status] ${d.status}`); scroll();
   });
 }
 function closeLog() {
@@ -1166,7 +1185,8 @@ $('#submit').onclick = async () => {
   }
   const type = params.type = $('#type').value;
   const pathVal = $('#inputPath')?.value.trim() || '';
-  const file = $('#file')?.files?.[0];
+  const fileList = $('#file')?.files ? [...$('#file').files] : [];
+  const file = fileList[0];
   const osgbFiles = $('#osgbDir')?.files ? [...$('#osgbDir').files] : [];
   const osgbZip = $('#osgbZip')?.files?.[0] || null;
   const btn = $('#submit'); btn.disabled = true;
@@ -1194,7 +1214,8 @@ $('#submit').onclick = async () => {
     } else if (file && !jsonManual) {
       const fd = new FormData();
       fd.append('options', JSON.stringify(params));
-      fd.append('file', file, file.name);
+      // tiles：全部选中文件一次上传（服务端统一参数逐个转换后合并）
+      for (const f of (type === 'tiles' ? fileList : [file])) fd.append('file', f, f.name);
       const prj = $('#paramForm').querySelector('[data-k="@prj"]')?.files?.[0];
       const cps = $('#paramForm').querySelector('[data-k="@cps"]')?.files?.[0];
       const cfg = $('#paramForm').querySelector('[data-k="@cfg"]')?.files?.[0];
@@ -1205,9 +1226,12 @@ $('#submit').onclick = async () => {
     } else if (pathVal || !file) {
       if (type !== 'osgb' && !pathVal && !file) { showMsg('请选择输入文件，或填写服务器本地路径', 'err'); return; }
       if (type === 'osgb' && !pathVal && !osgbFiles.length) { showMsg('请选择 OSGB 文件夹，或填写服务器本地路径', 'err'); return; }
+      const jbody = { ...params };
+      const paths = type === 'tiles' ? pathVal.split(',').map((s) => s.trim()).filter(Boolean) : [];
+      if (paths.length > 1) jbody.inputPaths = paths; else jbody.inputPath = pathVal;
       res = await fetch('/api/v1/jobs', { method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...params, inputPath: pathVal }) });
+        body: JSON.stringify(jbody) });
     } else {
       showMsg('JSON 模式仅支持「服务器本地路径」输入', 'err');
       return;

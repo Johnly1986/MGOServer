@@ -33,6 +33,16 @@ function validateInput(type, { name, kind }) {
   }
 }
 
+/** Pick a collision-free upload name: model.fbx + model.fbx → model.fbx, model_2.fbx */
+function uniqueName(taken, orig) {
+  if (!taken.includes(orig)) return orig;
+  const ext = path.extname(orig);
+  const stem = orig.slice(0, orig.length - ext.length) || 'file';
+  let i = 2; let cand;
+  do { cand = `${stem}_${i++}${ext}`; } while (taken.includes(cand));
+  return cand;
+}
+
 export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
   /* ---- write-protection: IP whitelist (localhost always allowed) ----
    * Mutations (POST/DELETE) require a whitelisted client IP.  Reads stay
@@ -96,12 +106,14 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
       uploadMaxBytes: cfg.uploadMaxBytes,
       queueMax: cfg.queueMax,
       maxConcurrentJobs: cfg.maxConcurrentJobs,
+      maxInputFiles: cfg.maxInputFiles,
       jobTimeoutS: cfg.jobTimeoutS,
       ttlDays: cfg.ttlDays,
     },
     features: {
       osgb: mgo.hasOsgb,
       localPathInput: cfg.allowLocalPath,
+      multiFileTiles: Boolean(cfg.tilesToolsCli),
       authMode: 'ip-whitelist',
     },
     client: {
@@ -238,37 +250,58 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
           input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
           delete options.relPaths; delete options.dirName;
         } else {
-          // ---- single-file upload (osgb also accepts a .zip of the folder) ----
-          if (dirFiles.length !== 1) {
+          // ---- file upload(s): one file for every type; `tiles` also accepts
+          // several `file` parts — all converted with the SAME options params,
+          // then merged into one unified tileset.json (3d-tiles-tools) ----
+          if (dirFiles.length > 1 && options.type !== 'tiles') {
             throw err(400, 'TOO_MANY_FILES',
-              'expected exactly one file field "file" (or options.relPaths for a directory upload)');
+              'expected exactly one file field "file" (multi-file upload is tiles-only; for a directory use options.relPaths)');
           }
-          fileName = dirFiles[0].orig;
-          const ext = extOf(fileName);
-          if (options.type === 'osgb' && ext === 'zip') {
-            // zip upload → stream-extract (bomb-safe) into the staged dir,
-            // then treat exactly like a folder upload
-            const zipBuf = await fsp.readFile(path.join(stagedDir, dirFiles[0].seq));
-            await fsp.rm(path.join(stagedDir, dirFiles[0].seq), { force: true });
-            let extracted;
-            try {
-              extracted = await extractZip(zipBuf, stagedDir, {
-                maxEntries: cfg.uploadMaxFiles,
-                maxTotalBytes: Math.max(cfg.uploadMaxBytes, 1) * 4,
-              });
-            } catch (ze) {
-              if (ze.code === 'ZIP_BOMB') throw err(400, 'ZIP_BOMB', ze.message);
-              throw err(422, 'ZIP_PATH', ze.message);
+          if (dirFiles.length > cfg.maxInputFiles) {
+            throw err(400, 'TOO_MANY_INPUT_FILES',
+              `more than ${cfg.maxInputFiles} input files (MGO_MAX_INPUT_FILES)`);
+          }
+          if (dirFiles.length > 1 && options.dirName) {
+            throw err(422, 'BAD_OPTIONS', 'dirName is only valid for directory/zip uploads');
+          }
+          const names = [];
+          for (const df of dirFiles) {
+            const nm = uniqueName(names, df.orig);
+            const ext = extOf(nm);
+            if (dirFiles.length === 1 && options.type === 'osgb' && ext === 'zip') {
+              // zip upload → stream-extract (bomb-safe) into the staged dir,
+              // then treat exactly like a folder upload
+              const zipBuf = await fsp.readFile(path.join(stagedDir, df.seq));
+              await fsp.rm(path.join(stagedDir, df.seq), { force: true });
+              let extracted;
+              try {
+                extracted = await extractZip(zipBuf, stagedDir, {
+                  maxEntries: cfg.uploadMaxFiles,
+                  maxTotalBytes: Math.max(cfg.uploadMaxBytes, 1) * 4,
+                });
+              } catch (ze) {
+                if (ze.code === 'ZIP_BOMB') throw err(400, 'ZIP_BOMB', ze.message);
+                throw err(422, 'ZIP_PATH', ze.message);
+              }
+              if (!extracted.files) throw err(400, 'EMPTY_ZIP', 'zip archive contains no files');
+              const dirName = sanitizeFileName(String(options.dirName ?? 'osgb'));
+              validateInput(options.type, { name: dirName, kind: 'dir' });
+              input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
+              delete options.dirName;
+              df.consumed = true;
+              break;
             }
-            if (!extracted.files) throw err(400, 'EMPTY_ZIP', 'zip archive contains no files');
-            const dirName = sanitizeFileName(String(options.dirName ?? 'osgb'));
-            validateInput(options.type, { name: dirName, kind: 'dir' });
-            input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
-            delete options.dirName;
-          } else {
-            await fsp.rename(path.join(stagedDir, dirFiles[0].seq), path.join(stagedDir, fileName));
-            validateInput(options.type, { name: fileName, kind: 'file' });
-            input = { kind: 'upload', name: fileName, prjName, cpsName, cfgName, stagedDir };
+            await fsp.rename(path.join(stagedDir, df.seq), path.join(stagedDir, nm));
+            validateInput(options.type, { name: nm, kind: 'file' });
+            names.push(nm);
+          }
+          if (!input) {
+            if (names.length > 1) {
+              input = { kind: 'upload', name: names[0], names, prjName, cpsName, cfgName, stagedDir };
+            } else {
+              fileName = names[0];
+              input = { kind: 'upload', name: fileName, prjName, cpsName, cfgName, stagedDir };
+            }
           }
         }
       } catch (e) {
@@ -282,11 +315,38 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
       options = { ...req.body };
       const p = options.inputPath;
       delete options.inputPath;
-      if (!p) throw err(422, 'INPUT_REQUIRED', 'provide a multipart "file" or JSON "inputPath"');
+      const ps = options.inputPaths;
+      delete options.inputPaths;
       const kind = options.type === 'osgb' ? 'dir' : 'file';
-      const abs = checkLocalPath(p, cfg, { kind, label: 'inputPath' });
-      validateInput(options.type, { name: path.basename(abs), kind });
-      input = { kind: 'path', path: abs, name: path.basename(abs) };
+      let paths;
+      if (Array.isArray(ps)) {
+        if (options.type !== 'tiles') {
+          throw err(400, 'INPUT_TYPE', 'inputPaths (multi-file) is only supported for type "tiles"');
+        }
+        if (!ps.length) throw err(422, 'INPUT_REQUIRED', 'inputPaths must list at least one file');
+        if (ps.length > cfg.maxInputFiles) {
+          throw err(400, 'TOO_MANY_INPUT_FILES',
+            `more than ${cfg.maxInputFiles} input files (MGO_MAX_INPUT_FILES)`);
+        }
+        paths = ps;
+      } else if (p) {
+        paths = [p];
+      } else {
+        throw err(422, 'INPUT_REQUIRED', 'provide a multipart "file" or JSON "inputPath"/"inputPaths"');
+      }
+      const abs = paths.map((x) => checkLocalPath(x, cfg, { kind, label: 'inputPath' }));
+      for (const a of abs) validateInput(options.type, { name: path.basename(a), kind });
+      if (abs.length > 1) {
+        input = {
+          kind: 'path',
+          paths: abs,
+          path: abs[0],
+          names: abs.map((a) => path.basename(a)),
+          name: path.basename(abs[0]),
+        };
+      } else {
+        input = { kind: 'path', path: abs[0], name: path.basename(abs[0]) };
+      }
     } else {
       throw err(415, 'UNSUPPORTED_MEDIA', 'use multipart/form-data or application/json');
     }

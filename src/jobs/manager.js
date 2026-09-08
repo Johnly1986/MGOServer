@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
 import { runJob } from './runner.js';
-import { buildArgs, resolveOutPath } from './argv.js';
+import { buildArgs, buildMergeArgs, resolveOutPath, tileStem } from './argv.js';
 import { discoverArtifacts, primaryArtifact } from './artifacts.js';
 import { ProgressParser, isModuleLine } from './progress.js';
 
@@ -93,9 +93,9 @@ export class JobManager extends EventEmitter {
   /* ---------------- job lifecycle ---------------- */
 
   async create({ id, type, params, input }) {
-    // input = {kind:'upload', name, stagedDir?} (file in stagedDir, moved into
-    // the job's input/ here) | {kind:'upload', name} (already in input/) |
-    // {kind:'path', path, name}
+    // input = {kind:'upload', name|names[], stagedDir?} (files in stagedDir,
+    // moved into the job's input/ here) | {kind:'upload', name|names[]}
+    // (already in input/) | {kind:'upload-dir', name} | {kind:'path', path|paths[]}
     if (this.pending.length >= this.cfg.queueMax) {
       throw httpError(429, 'job queue is full', 'QUEUE_FULL');
     }
@@ -107,20 +107,23 @@ export class JobManager extends EventEmitter {
     await fsp.mkdir(this.outDir(id), { recursive: true });
 
     if (input.kind === 'upload') {
+      const names = input.names ?? [input.name];
       if (input.stagedDir) {
-        for (const nm of [input.name, input.prjName, input.cpsName, input.cfgName]) {
+        for (const nm of [...names, input.prjName, input.cpsName, input.cfgName]) {
           if (!nm) continue;
           await fsp.rename(path.join(input.stagedDir, nm),
             path.join(this.inputDir(id), nm));
         }
         await fsp.rm(input.stagedDir, { recursive: true, force: true });
-        input = { kind: 'upload', name: input.name, prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
+        input = { kind: 'upload', name: names[0], ...(names.length > 1 ? { names } : {}),
+          prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
       }
-      // file must already have been streamed into inputDir by the route
-      const p = path.join(this.inputDir(id), input.name);
-      if (!fs.existsSync(p)) {
-        await fsp.rm(this.jobDir(id), { recursive: true, force: true });
-        throw httpError(400, `missing uploaded file: ${input.name}`, 'INPUT_MISSING');
+      // files must already have been streamed into inputDir by the route
+      for (const nm of names) {
+        if (!fs.existsSync(path.join(this.inputDir(id), nm))) {
+          await fsp.rm(this.jobDir(id), { recursive: true, force: true });
+          throw httpError(400, `missing uploaded file: ${nm}`, 'INPUT_MISSING');
+        }
       }
     } else if (input.kind === 'upload-dir') {
       // directory upload: the route rebuilt the folder tree inside stagedDir;
@@ -131,7 +134,9 @@ export class JobManager extends EventEmitter {
         input = { kind: 'upload-dir', name: input.name, prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
       }
     } else {
-      input.path = path.resolve(input.path);
+      input.paths = (input.paths ?? [input.path]).map((p) => path.resolve(p));
+      input.path = input.paths[0];
+      if (input.paths.length > 1) input.names = input.names ?? input.paths.map((p) => path.basename(p));
     }
 
     const job = {
@@ -164,25 +169,58 @@ export class JobManager extends EventEmitter {
     }
   }
 
-  async start(job) {
-    const io = {
-      input: job.input.kind === 'upload'
-        ? path.join(this.inputDir(job.id), job.input.name)
-        : job.input.kind === 'upload-dir'
-          ? this.inputDir(job.id)              // osgb root = the whole input dir
-          : job.input.path,
-      out: resolveOutPath(job, this.outDir(job.id), job.input.name ?? 'model'),
-    };
-    // uploaded .prj / control-point CSV / mesh config CSV land in the job's own input dir
+  /* ---------------- run pipeline ---------------- */
+
+  /** The `-i` targets of a job, in upload order: [{name, path}]. */
+  jobFiles(job) {
+    const inp = job.input ?? {};
+    if (inp.kind === 'upload') {
+      const names = inp.names ?? [inp.name];
+      return names.map((n) => ({ name: n, path: path.join(this.inputDir(job.id), n) }));
+    }
+    if (inp.kind === 'upload-dir') return [{ name: inp.name, path: this.inputDir(job.id) }];
+    const paths = inp.paths ?? [inp.path];
+    return paths.map((p, i) => ({
+      name: inp.names?.[i] ?? path.basename(p), path: p,
+    }));
+  }
+
+  /** Uploaded side-car files (.prj / control-point CSV / mesh config CSV),
+   *  all landing in the job's own input dir. */
+  ioBase(job) {
+    const io = {};
     if (job.input.prjName) io.prjFile = path.join(this.inputDir(job.id), job.input.prjName);
     if (job.input.cpsName) io.cpsFile = path.join(this.inputDir(job.id), job.input.cpsName);
     if (job.input.cfgName) io.cfgFile = path.join(this.inputDir(job.id), job.input.cfgName);
-    // inline control-points CSV → on-disk file the CLI expects (wins over upload)
-    if (job.params?.georef?.controlPoints) {
-      const cps = path.join(this.inputDir(job.id), '_controlpoints.csv');
-      await fsp.writeFile(cps, job.params.georef.controlPoints);
-      io.cpsFile = cps;
+    return io;
+  }
+
+  async start(job) {
+    try {
+      // inline control-points CSV → on-disk file the CLI expects (wins over upload)
+      if (job.params?.georef?.controlPoints) {
+        const cps = path.join(this.inputDir(job.id), '_controlpoints.csv');
+        await fsp.writeFile(cps, job.params.georef.controlPoints);
+        job.input.cpsName = '_controlpoints.csv';
+      }
+      if (job.type === 'tiles') await this.runTiles(job);
+      else await this.runSingle(job);
+    } catch (err) {
+      this.setStatus(job, 'failed', { error: { code: 'RUNNER', message: String(err?.message ?? err) } });
+      this.handles.delete(job.id);
+      await this.persist(job);
     }
+    this.pump();
+  }
+
+  /** One mgo invocation (every job type except multi-file tiles). */
+  async runSingle(job) {
+    const f = this.jobFiles(job)[0];
+    const io = {
+      ...this.ioBase(job),
+      input: f.path,
+      out: resolveOutPath(job, this.outDir(job.id), f.name ?? 'model'),
+    };
     const args = buildArgs(job, io);
     io.args = args; // kept on job for audit/restart
     job.argv = args;
@@ -191,21 +229,128 @@ export class JobManager extends EventEmitter {
     await this.persist(job);
 
     const parser = new ProgressParser();
+    const res = await this.spawn(job, this.cfg.binary, args, parser);
+    await this.finish(job, parser, res);
+  }
+
+  /** Emit an SSE log event AND append to run.log (audit trail for service
+   *  steps that do not come from a child process, e.g. merge phase). */
+  async serviceLog(job, line) {
+    this.emitEvent(job, { type: 'log', stream: 'stdout', line });
+    try { await fsp.appendFile(this.logPath(job.id), `${line}\n`); } catch { /* ok if missing */ }
+  }
+
+  /**
+   * tiles: convert EVERY input with the SAME params into its own
+   * `out/<stem>/` (identical directory logic for 1…N files), then merge the
+   * per-file tilesets into one unified `out/tileset.json` via 3d-tiles-tools
+   * (mergeJson — the sub tilesets stay external and keep serving fine).
+   */
+  async runTiles(job) {
+    const files = this.jobFiles(job);
+    const outDir = this.outDir(job.id);
+    const used = new Set();
+    const steps = files.map((f) => ({ ...f, stem: tileStem(f.name, used) }));
+    const N = steps.length;
+    const parser = new ProgressParser();
+
+    for (let i = 0; i < N; i++) {
+      const st = steps[i];
+      st.tileset = path.join(outDir, st.stem, 'tileset.json');
+      // the engine will not create its -o directory itself (real MGOConsole
+      // exits 1 with "[TileBuilder] Cannot write …/tileset.json")
+      await fsp.mkdir(path.dirname(st.tileset), { recursive: true });
+      const io = { ...this.ioBase(job), input: st.path, out: path.dirname(st.tileset) };
+      const args = buildArgs(job, io);
+      if (i === 0) {
+        job.argv = args;
+        this.setStatus(job, 'running', { startedAt: new Date().toISOString(), argv: args });
+        await this.persist(job);
+      }
+      await this.serviceLog(job, `[Service] (${i + 1}/${N}) converting ${st.name} -> out/${st.stem}/`);
+      await this.serviceLog(job, `[Service] argv: ${args.join(' ')}`);
+      const res = await this.spawn(job, this.cfg.binary, args, parser,
+        (line, stream) => this.onLine(job, parser, line, stream, { index: i, files: N }));
+      if (!res.ok) return this.finish(job, parser, res, `convert ${st.name}`);
+      if (res.canceled || res.timedOut) return this.finish(job, parser, res);
+      if (res.exitCode !== 0) return this.finish(job, parser, res, `convert ${st.name}`);
+      if (!fs.existsSync(st.tileset)) {
+        return this.fail(job, 'NO_ARTIFACTS',
+          `exit 0 but no tileset.json for input "${st.name}" (expected out/${st.stem}/tileset.json)`);
+      }
+    }
+
+    await this.mergeTilesets(job, parser, steps);
+  }
+
+  /** 3d-tiles-tools mergeJson → unified out/tileset.json. */
+  async mergeTilesets(job, parser, steps) {
+    const outDir = this.outDir(job.id);
+    const merged = path.join(outDir, 'tileset.json');
+    const inputs = steps.map((s) => s.tileset);
+    const tool = this.cfg.tilesToolsCli;
+    if (!tool) {
+      return this.fail(job, 'MERGE_TOOL_MISSING',
+        '3d-tiles-tools CLI not found — install dependencies or set MGO_3D_TILES_TOOLS');
+    }
+    await fsp.rm(merged, { force: true });
+    const margs = buildMergeArgs(inputs, merged);
+    job.mergeArgv = margs;
+    job.progress = { ...job.progress, percent: Math.max(job.progress.percent, 99),
+      phase: 'merge', source: 'service',
+      message: `merging ${inputs.length} tileset(s) -> out/tileset.json` };
+    this.emitEvent(job, { type: 'progress', data: job.progress });
+    await this.serviceLog(job, `[Service] merging ${inputs.length} tileset(s) with 3d-tiles-tools mergeJson`);
+
+    // the npm CLI ships an .mjs script; spawn it on the current node binary.
+    // An explicit MGO_3D_TILES_TOOLS may point at any executable instead.
+    const isScript = /\.(c|m)?js$/i.test(tool);
+    const res = await this.spawn(job, isScript ? process.execPath : tool,
+      isScript ? [tool, ...margs] : margs, parser);
+    if (!res.ok) return this.failMerge(job, `cannot launch 3d-tiles-tools "${tool}": ${res.error}`);
+    if (res.canceled || res.timedOut) return this.finish(job, parser, res);
+    if (res.exitCode !== 0) {
+      return this.failMerge(job, `3d-tiles-tools mergeJson exited with code ${res.exitCode}`);
+    }
+    // v0.5.4 logs errors yet exits 0 — the merged file itself is the truth
+    let doc;
+    try { doc = JSON.parse(await fsp.readFile(merged, 'utf8')); } catch {
+      return this.failMerge(job, 'merge produced no readable out/tileset.json (see run.log)');
+    }
+    const kids = doc?.root?.children ?? [];
+    if (!doc || !doc.root?.boundingVolume || kids.length !== inputs.length) {
+      return this.failMerge(job,
+        `merged tileset.json is invalid (root.boundingVolume missing or ${kids.length} children ≠ ${inputs.length} inputs)`);
+    }
+    await this.finish(job, parser, { ok: true, exitCode: 0 });
+  }
+
+  /** spawn + register the cancel handle; onLine overridable for scaling. */
+  spawn(job, binary, args, parser, onLine) {
     const handle = runJob({
-      binary: this.cfg.binary,
+      binary,
       args,
       logPath: this.logPath(job.id),
       timeoutMs: this.cfg.jobTimeoutS * 1000,
-      onLine: (line, stream) => this.onLine(job, parser, line, stream),
+      onLine: onLine ?? ((line, stream) => this.onLine(job, parser, line, stream)),
     });
     this.handles.set(job.id, handle);
-    const res = await handle.promise;
-    this.handles.delete(job.id);
-    await this.finish(job, parser, res);
-    this.pump();
+    return handle.promise.then((res) => { this.handles.delete(job.id); return res; });
   }
 
-  onLine(job, parser, line, stream) {
+  fail(job, code, message) {
+    this.setStatus(job, 'failed', {
+      exitCode: null,
+      error: { code, message, logTail: job._tail.slice(-15) },
+    });
+    return this.persist(job);
+  }
+
+  failMerge(job, message) {
+    return this.fail(job, 'MERGE', `${message} — inputs kept under out/<name>/`);
+  }
+
+  onLine(job, parser, line, stream, scale) {
     if (!line.trim()) return;
     job._tail.push(line);
     if (job._tail.length > TAIL_CAP) job._tail.shift();
@@ -213,13 +358,18 @@ export class JobManager extends EventEmitter {
     const ev = parser.parse(line);
     if (ev) {
       const prev = job.progress;
+      // multi-file tiles: scale the per-file 0..100 into this job's slice
+      let percent = ev.percent;
+      if (scale && scale.files > 1) {
+        percent = Math.min(98, Math.floor(((scale.index + ev.percent / 100) / scale.files) * 98));
+      }
       job.progress = {
-        done: ev.done, total: ev.total, percent: ev.percent,
+        done: ev.done, total: ev.total, percent,
         phase: ev.phase ?? prev.phase, source: 'cli-stdout', message: ev.detail ?? line,
       };
-      if (ev.type === 'done' || ev.percent !== prev.percent) {
+      if (ev.type === 'done' || percent !== prev.percent) {
         this.emitEvent(job, { type: 'progress', data: job.progress });
-        if (ev.type === 'done' || (ev.percent - prev.percent >= 5)) this.persist(job);
+        if (ev.type === 'done' || percent - prev.percent >= 5) this.persist(job);
       }
       return;
     }
@@ -229,10 +379,11 @@ export class JobManager extends EventEmitter {
     }
   }
 
-  async finish(job, parser, res) {
+  async finish(job, parser, res, stage = null) {
+    const where = stage ? ` (${stage})` : '';
     if (!res.ok) {
       this.setStatus(job, 'failed', {
-        error: { code: 'SPAWN', message: `cannot launch mgo binary "${this.cfg.binary}": ${res.error}`,
+        error: { code: 'SPAWN', message: `cannot launch mgo binary "${this.cfg.binary}": ${res.error}${where}`,
           logTail: job._tail.slice(-10) },
       });
       return this.persist(job);
@@ -266,14 +417,14 @@ export class JobManager extends EventEmitter {
       // usage error means our argv mapping is wrong — surface loudly
       this.setStatus(job, 'usage_error', {
         exitCode: 2,
-        error: { code: 'USAGE_ERROR', message: 'mgo rejected the arguments (service mapping bug?)',
+        error: { code: 'USAGE_ERROR', message: `mgo rejected the arguments (service mapping bug?)${where}`,
           logTail: job._tail.slice(-15) },
       });
       return this.persist(job);
     }
     this.setStatus(job, 'failed', {
       exitCode: res.exitCode,
-      error: { code: 'CONVERSION', message: `mgo exited with code ${res.exitCode}`,
+      error: { code: 'CONVERSION', message: `mgo exited with code ${res.exitCode}${where}`,
         logTail: job._tail.slice(-15) },
     });
     return this.persist(job);
@@ -379,7 +530,10 @@ export function jobDto(job, { withParams = false } = {}) {
     id: job.id,
     type: job.type,
     status: job.status,
-    inputName: job.input?.name ?? null,
+    inputName: job.input?.names?.length > 1
+      ? `${job.input.name} (+${job.input.names.length - 1})`
+      : (job.input?.name ?? null),
+    inputNames: job.input?.names ?? (job.input?.name ? [job.input.name] : null),
     progress: job.progress,
     createdAt: job.createdAt,
     startedAt: job.startedAt,

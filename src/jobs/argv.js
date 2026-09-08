@@ -139,8 +139,46 @@ export function buildArgs(job, io) {
   return a;
 }
 
+/**
+ * Directory stem for one tiles input: basename without extension, reduced to
+ * [A-Za-z0-9._-] so it is always a safe single path segment.  Every tiles
+ * file — one or many — is converted into `out/<stem>/`, keeping the directory
+ * logic identical between single- and multi-file conversion.  `used` dedupes
+ * inputs that share a stem (a.fbx + a.obj → a, a_2).
+ */
+export function tileStem(name, used = null) {
+  let stem = path.basename(String(name ?? 'model'), path.extname(String(name ?? '')))
+    .replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._]+/, '') || 'model';
+  if (used) {
+    let s = stem; let i = 2;
+    while (used.has(s)) s = `${stem}_${i++}`;
+    stem = s;
+    used.add(stem);
+  }
+  return stem;
+}
+
+/**
+ * argv for the 3d-tiles-tools CLI that merges per-file tilesets into one
+ * unified tileset.json (external-tileset children, relative references).
+ *
+ * @param inputs  absolute paths of the per-file tileset.json files
+ * @param output  absolute path of the merged tileset.json to write
+ */
+export function buildMergeArgs(inputs, output) {
+  const a = ['mergeJson'];
+  for (const i of inputs) a.push('-i', i);
+  a.push('-o', output);
+  return a;
+}
+
 /** Output target inside the job workspace for a given job (dir vs file). */
 export function resolveOutPath(job, outDir, inputName) {
+  if (job.type === 'tiles') {
+    // uniform layout: every model converts into its own sub-directory;
+    // the (possibly merged) unified tileset.json lands directly in outDir
+    return path.join(outDir, tileStem(inputName));
+  }
   if (job.type === 'mesh') {
     const stem = path.basename(inputName, path.extname(inputName)) || 'model';
     return path.join(outDir, `${stem}.${job.params.outputFormat ?? 'glb'}`);

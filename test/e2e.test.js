@@ -11,8 +11,10 @@ import { loadConfig } from '../src/config.js';
 
 const IS_WIN = process.platform === 'win32';
 const FAKE = path.join(import.meta.dirname, 'fixtures', 'fake-mgo.sh');
+const FAKE_TOOL = path.join(import.meta.dirname, 'fixtures', 'fake-3d-tiles-tools.sh');
 
 let app; let base; let tmp;
+let app2; let base2;   // merge-failure sandbox: fake 3d-tiles-tools + tiny input cap
 
 before(async () => {
   if (IS_WIN) return; // fake binary is bash
@@ -31,18 +33,36 @@ before(async () => {
   }));
   await app.listen({ host: '127.0.0.1', port: 0 });
   base = `http://127.0.0.1:${app.server.address().port}`;
+
+  app2 = await buildApp(loadConfig({
+    binary: FAKE,
+    tilesToolsCli: FAKE_TOOL,
+    maxInputFiles: 2,
+    workspaceRoot: path.join(tmp, 'ws2'),
+    maxConcurrentJobs: 1,
+    queueMax: 5,
+    minFreeGb: 0,
+    ttlDays: 7,
+    jobTimeoutS: 30,
+    allowLocalPath: true,
+    allowedRoots: [tmp],
+    logLevel: 'silent',
+  }));
+  await app2.listen({ host: '127.0.0.1', port: 0 });
+  base2 = `http://127.0.0.1:${app2.server.address().port}`;
 });
 
 after(async () => {
   if (IS_WIN) return;
   await app.close();
+  await app2.close();
   await fsp.rm(tmp, { recursive: true, force: true });
 });
 
 const skip = IS_WIN && { skip: 'fake mgo binary is bash-only' };
 
-async function api(method, p, body, headers = {}) {
-  const r = await fetch(base + p, {
+async function api(method, p, body, headers = {}, b = base) {
+  const r = await fetch(b + p, {
     method,
     headers: body ? { 'content-type': 'application/json', ...headers } : headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -52,10 +72,10 @@ async function api(method, p, body, headers = {}) {
   return { status: r.status, json, headers: r.headers };
 }
 
-async function waitTerminal(id, ms = 8000) {
+async function waitTerminal(id, ms = 8000, b = base) {
   const t0 = Date.now();
   for (;;) {
-    const { json } = await api('GET', `/api/v1/jobs/${id}`);
+    const { json } = await api('GET', `/api/v1/jobs/${id}`, null, {}, b);
     if (['succeeded', 'failed', 'canceled', 'usage_error'].includes(json.status)) return json;
     assert.ok(Date.now() - t0 < ms, `job ${id} did not finish in ${ms}ms`);
     await new Promise((r) => setTimeout(r, 40));
@@ -224,6 +244,180 @@ test('tiles job via multipart upload', skip, async () => {
   const tiles = done.artifacts.find((a) => a.role === '3dtiles');
   assert.ok(tiles);
   assert.equal(tiles.url, `/ws/${j.id}/out/tileset.json`);
+  // unified directory logic: single file also lands in out/<stem>/ and is
+  // referenced through the merged tileset.json
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.equal(merged.root.children.length, 1);
+  assert.equal(merged.root.children[0].content.uri, 'model/tileset.json');
+  const sub = await fetch(base + `/ws/${j.id}/out/model/tileset.json`);
+  assert.equal(sub.status, 200);
+});
+
+/* ---------------- tiles multi-file conversion + merge ---------------- */
+
+test('tiles multi-file via multipart: unified params, per-file dirs, merged tileset', skip, async () => {
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({
+    type: 'tiles', zUp: true, maxLod: 4, refine: 'REPLACE',
+    simplify: { error: 0.02 }, origin: [1, 2, 3],
+  }));
+  fd.append('file', new Blob(['FBXK'], { type: 'application/octet-stream' }), 'tower.fbx');
+  fd.append('file', new Blob(['OBJDATA'], { type: 'application/octet-stream' }), 'podium.obj');
+  fd.append('file', new Blob(['GLB'], { type: 'application/octet-stream' }), 'statue.glb');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.equal(j.inputName, 'tower.fbx (+2)');
+  assert.deepEqual(j.inputNames, ['tower.fbx', 'podium.obj', 'statue.glb']);
+  const done = await waitTerminal(j.id, 12000);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+  assert.equal(done.progress.percent, 100);
+
+  // every input converted into its own out/<stem>/ with the SAME argv params
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=200`)).json();
+  const argvLines = lines.filter((l) => l.startsWith('argv:'));
+  assert.equal(argvLines.length, 3, 'one mgo invocation per input file');
+  const pairs = [['tower.fbx', 'tower'], ['podium.obj', 'podium'], ['statue.glb', 'statue']];
+  for (const [i, [file, stem]] of pairs.entries()) {
+    assert.match(argvLines[i], new RegExp(`^argv: tiles -i \\S+/input/${file.replace('.', '\\.')} -o \\S+/out/${stem}( |$)`));
+    // unified conversion params repeated on every invocation
+    assert.ok(argvLines[i].includes(' -Z'), 'zUp on every file');
+    assert.ok(argvLines[i].includes('-r REPLACE'), 'refine on every file');
+    assert.ok(argvLines[i].includes('--max-lod 4'), 'maxLod on every file');
+    assert.ok(argvLines[i].includes('--error 0.02'), 'simplify on every file');
+    assert.ok(argvLines[i].includes('--origin 1,2,3'), 'origin on every file');
+  }
+  assert.ok(lines.some((l) => l.includes('merging 3 tileset(s) with 3d-tiles-tools mergeJson')));
+  // service-side argv audit line per invocation (independent of what the engine echoes)
+  assert.equal(lines.filter((l) => l.startsWith('[Service] argv: tiles')).length, 3);
+
+  // merged tileset at /out/tileset.json referencing the 3 external tilesets
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.ok(merged.root.boundingVolume, 'merged root has a boundingVolume');
+  const uris = merged.root.children.map((c) => c.content.uri).sort();
+  assert.deepEqual(uris, ['podium/tileset.json', 'statue/tileset.json', 'tower/tileset.json']);
+  for (const u of uris) {
+    const sub = await fetch(base + `/ws/${j.id}/out/${u}`);
+    assert.equal(sub.status, 200, `external tileset ${u} served by data plane`);
+  }
+  const b3 = await fetch(base + `/ws/${j.id}/out/tower/L0/tile.b3dm`);
+  assert.equal(b3.status, 200);
+  assert.match(b3.headers.get('content-type'), /octet-stream/);
+  const tiles = done.artifacts.find((a) => a.role === '3dtiles');
+  assert.equal(tiles.url, `/ws/${j.id}/out/tileset.json`);
+  assert.ok(done.viewerUrl.includes('type=3dtiles'));
+});
+
+test('tiles multi-file dedupes identical names (a.fbx + a.fbx → a, a_2)', skip, async () => {
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob(['ONE'], { type: 'application/octet-stream' }), 'same.fbx');
+  fd.append('file', new Blob(['TWO'], { type: 'application/octet-stream' }), 'same.fbx');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.deepEqual(j.inputNames, ['same.fbx', 'same_2.fbx']);
+  const done = await waitTerminal(j.id, 12000);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.deepEqual(merged.root.children.map((c) => c.content.uri).sort(),
+    ['same/tileset.json', 'same_2/tileset.json']);
+});
+
+test('tiles multi-file via local inputPaths', skip, async () => {
+  const a = path.join(tmp, 'm1.fbx'); const b = path.join(tmp, 'm2.obj');
+  await fsp.writeFile(a, 'FBXK'); await fsp.writeFile(b, 'OBJ');
+  const r = await api('POST', '/api/v1/jobs', {
+    type: 'tiles', inputPaths: [a, b], maxLod: 3,
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  const done = await waitTerminal(r.json.id, 12000);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+  const merged = await (await fetch(base + `/ws/${done.id}/out/tileset.json`)).json();
+  assert.deepEqual(merged.root.children.map((c) => c.content.uri).sort(),
+    ['m1/tileset.json', 'm2/tileset.json']);
+});
+
+test('multi-file upload rejected for non-tiles types', skip, async () => {
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'terrain' }));
+  fd.append('file', new Blob(['A']), 'a.tif');
+  fd.append('file', new Blob(['B']), 'b.tif');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error.code, 'TOO_MANY_FILES');
+});
+
+test('tiles multi-file with a bad extension rejects the whole job', skip, async () => {
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob(['FBXK']), 'good.fbx');
+  fd.append('file', new Blob(['EVIL']), 'bad.exe');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  assert.equal(r.status, 422);
+  assert.equal((await r.json()).error.code, 'INPUT_EXT');
+});
+
+test('inputPaths rejected for non-tiles types', skip, async () => {
+  const a = path.join(tmp, 'd1.tif');
+  await fsp.writeFile(a, 'x');
+  const r = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPaths: [a, a] });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error.code, 'INPUT_TYPE');
+});
+
+test('tiles multi-file beyond maxInputFiles → 400 (and merge works with fake tool)', skip, async () => {
+  const mk = (name) => {
+    const fd = new FormData();
+    fd.append('options', JSON.stringify({ type: 'tiles' }));
+    fd.append('file', new Blob(['A'], { type: 'application/octet-stream' }), `${name}1.fbx`);
+    fd.append('file', new Blob(['B'], { type: 'application/octet-stream' }), `${name}2.fbx`);
+    fd.append('file', new Blob(['C'], { type: 'application/octet-stream' }), `${name}3.fbx`);
+    return fd;
+  };
+  const over = await fetch(base2 + '/api/v1/jobs', { method: 'POST', body: mk('cap') });
+  assert.equal(over.status, 400);
+  assert.equal((await over.json()).error.code, 'TOO_MANY_INPUT_FILES');
+
+  // cap-2 success path runs through the fake merge tool and records its argv
+  process.env.FAKE_MERGE_EXIT = '0';
+  try {
+    const fd = new FormData();
+    fd.append('options', JSON.stringify({ type: 'tiles' }));
+    fd.append('file', new Blob(['A'], { type: 'application/octet-stream' }), 'p.fbx');
+    fd.append('file', new Blob(['B'], { type: 'application/octet-stream' }), 'q.fbx');
+    const ok = await fetch(base2 + '/api/v1/jobs', { method: 'POST', body: fd });
+    const okTxt = await ok.text();
+    assert.equal(ok.status, 201, okTxt);
+    const j = JSON.parse(okTxt);
+    const done = await waitTerminal(j.id, 12000, base2);
+    assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+    const merged = await (await fetch(base2 + `/ws/${j.id}/out/tileset.json`)).json();
+    assert.equal(merged.root.children.length, 2);
+    const { lines } = await (await fetch(base2 + `/api/v1/jobs/${j.id}/log?tail=200`)).json();
+    const mergeLine = lines.find((l) => l.startsWith('merge argv:'));
+    assert.ok(mergeLine, 'fake 3d-tiles-tools was invoked');
+    assert.match(mergeLine, /^merge argv: mergeJson/);
+    assert.match(mergeLine, /-i \S+\/out\/p\/tileset\.json -i \S+\/out\/q\/tileset\.json -o \S+\/out\/tileset\.json$/);
+  } finally { delete process.env.FAKE_MERGE_EXIT; }
+});
+
+test('merge failure → failed job with MERGE code, per-file results kept', skip, async () => {
+  // FAKE_MERGE_EXIT defaults to 1 in the fake tool used by app2
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob(['A'], { type: 'application/octet-stream' }), 'x1.fbx');
+  fd.append('file', new Blob(['B'], { type: 'application/octet-stream' }), 'x2.fbx');
+  const r = await fetch(base2 + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  const done = await waitTerminal(j.id, 12000, base2);
+  assert.equal(done.status, 'failed');
+  assert.equal(done.error.code, 'MERGE');
+  assert.match(done.error.message, /3d-tiles-tools mergeJson exited with code 1/);
 });
 
 test('multipart upload of .prj + .cps feeds the CLI argv', skip, async () => {

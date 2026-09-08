@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildArgs, resolveOutPath } from '../src/jobs/argv.js';
+import { buildArgs, buildMergeArgs, resolveOutPath, tileStem } from '../src/jobs/argv.js';
 import { jobSchema } from '../src/jobs/schemas.js';
 
 const P = (o) => jobSchema.parse(o);
@@ -112,10 +112,35 @@ test('osgb: enu/origin/maxLod/georef/simplify', () => {
   assert.ok(args.at(-1) === '-v');
 });
 
-test('resolveOutPath: mesh/geojson write a file, others a dir', () => {
+test('resolveOutPath: mesh/geojson write a file, tiles a per-input dir, others outDir', () => {
   assert.equal(resolveOutPath({ type: 'mesh', params: { outputFormat: 'glb' } }, '/w/out', 'scene.fbx'), '/w/out/scene.glb');
   assert.equal(resolveOutPath({ type: 'geojson', params: {} }, '/w/out', 'sites.geojson'), '/w/out/sites.geojson');
-  assert.equal(resolveOutPath({ type: 'tiles', params: {} }, '/w/out', 'a.fbx'), '/w/out');
+  // unified tiles layout: every input (1…N) converts into out/<stem>/
+  assert.equal(resolveOutPath({ type: 'tiles', params: {} }, '/w/out', 'a.fbx'), '/w/out/a');
+  assert.equal(resolveOutPath({ type: 'tiles', params: {} }, '/w/out', 'a b.dae'), '/w/out/a_b');
+  assert.equal(resolveOutPath({ type: 'terrain', params: {} }, '/w/out', 'd.tif'), '/w/out');
+});
+
+test('tileStem: sanitizes, dedupes, falls back safely', () => {
+  assert.equal(tileStem('model.fbx'), 'model');
+  assert.equal(tileStem('../../etc/passwd.obj'), 'passwd');
+  assert.equal(tileStem('a b.dae'), 'a_b');
+  assert.equal(tileStem('.hidden'), 'hidden');
+  assert.equal(tileStem('中文 楼宇.slb'), 'model'); // fully non-ASCII → fallback
+  const used = new Set();
+  assert.equal(tileStem('a.fbx', used), 'a');
+  assert.equal(tileStem('a.obj', used), 'a_2');
+  assert.equal(tileStem('中文.fbx', used), 'model');      // falls back…
+  assert.equal(tileStem('楼宇.stl', used), 'model_2');    // …and dedupes
+});
+
+test('buildMergeArgs: 3d-tiles-tools mergeJson with one -i per result', () => {
+  assert.deepEqual(
+    buildMergeArgs(['/w/out/a/tileset.json', '/w/out/b/tileset.json'], '/w/out/tileset.json'),
+    ['mergeJson', '-i', '/w/out/a/tileset.json', '-i', '/w/out/b/tileset.json', '-o', '/w/out/tileset.json']);
+  assert.deepEqual(
+    buildMergeArgs(['/w/out/a/tileset.json'], '/w/out/tileset.json'),
+    ['mergeJson', '-i', '/w/out/a/tileset.json', '-o', '/w/out/tileset.json']);
 });
 
 test('schema rejects unknown keys, bad georef and even samplesPerTile', () => {
