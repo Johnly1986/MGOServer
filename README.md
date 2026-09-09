@@ -43,7 +43,7 @@ npm ci
 ```
 
 构建产物 [MGO] (https://github.com/Johnly1986/MGO/releases) （`MGOConsole` 及其 `.so`，或 `MGOConsole.exe` 及其 `.dll`）按系统放进本仓库
-`build/bin/linux/` 或 `build/bin/windows/` 即可被自动发现，放别处则用 `MGO_BINARY` 指定。
+`build/bin/linux/` 或 `build/bin/windows/`。
 
 ## 快速开始
 
@@ -52,11 +52,7 @@ npm start                                   # 监听 0.0.0.0:8080
 curl http://127.0.0.1:8080/api/v1/health    # 返回 {"status":"ok",…} 即启动成功
 ```
 
-浏览器打开 `http://127.0.0.1:8080/console.html`：选任务类型 → 拖入文件（模型 / 模型+贴图 ZIP /
-整个文件夹）→「提交任务」→ 进度走完点「打开查看器」，成果渲染在地球上。输入区顶部是
-「⬆ 上传 ↔ 🖥 服务器路径」切换段：切到后者可手填或**浏览服务器目录点选**本机文件/文件夹
-（原地处理，不上传不搬动）。本机的 8080 服务已通过仓库根 `.env` 启用该模式
-（`MGO_ALLOWED_ROOTS=/root/coding`）；未启用的部署里路径段置灰，悬停即可看到开启方法。
+浏览器打开 `http://127.0.0.1:8080/console.html`
 
 **API 提交**（不用网页时）：
 
