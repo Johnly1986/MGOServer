@@ -19,33 +19,13 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 
 切片计算由 [MGO](https://github.com/Johnly1986/MGO) C++17 引擎完成。
 
-## ✨ 功能特性
+## 功能特性
 
-- ✅ 六类任务：模型转 3D Tiles（`tiles`）、地形切片（`terrain`）、影像切片（`image`）、
-  GeoJSON 坐标转换（`geojson`）、模型简化转格式（`mesh`）、OSGB 倾斜摄影（`osgb`，
-  需引擎以 `MGO_WITH_OSG` 编译）
-- ✅ 输入覆盖 FBX / OBJ / glTF / glb / DAE / 3DS / PLY / STL、GeoTIFF、OSGB 目录或 ZIP；
-  输出自带 `tileset.json` / `layer.json` / `tilemapresource.xml` 描述文件，Cesium URL 直接加载
-- ✅ `tiles` 多文件转换：一次提交多个模型、共用同一套转换参数，逐个切片后由
-  [3d-tiles-tools](https://github.com/CesiumGS/3d-tiles-tools) 合并为统一 `tileset.json`；
-  单/多文件目录逻辑一致——每个输入产出 `out/<名>/`，统一入口恒为 `out/tileset.json`
-- ✅ 带贴图模型走「文件树」上传：`relPaths` 文件夹上传或 **模型+贴图 ZIP**（引擎按模型所在目录
-  解析 FBX/OBJ 外部贴图，只传模型文件会丢贴图）；tiles 自动识别树内**全部**模型并统一参数逐个
-  转换后合并（API 可用 `modelPath`/`modelPaths` 收窄），mesh 保持单模型语义、多候选时消歧
-- ✅ 控制台统一文件选择组件：一个拖拽区全收 模型文件 / 模型+贴图 ZIP / 整个文件夹，
-  内置「⬆ 上传 ↔ 🖥 服务器路径」切换（服务器未开 `MGO_ALLOW_LOCAL_PATH` 时路径段置灰并提示
-  开启方式）；路径模式可手填或**浏览服务器目录点选**（名称过滤、只看可选、面包屑、跨目录
-  多选、键盘导航，**已选条目自动置灰禁选、不可重复选中**）（只读、限 `MGO_ALLOWED_ROOTS`、受写 IP 白名单保护），本机大模型免上传原地处理
-- ✅ 切片跑在原生 C++ 进程，terrain 出瓦多线程并行；简化基于扩展版 meshoptimizer，
-  锁定瓦片边界不留缝；服务层任务排队限流、可取消、超时兜底、成果按 TTL 自动清理
-- ✅ 坐标系引擎：EPSG / WKT / `+proj` / `.prj` 定义投影——上传模式直接附带投影文件，
-  服务器路径模式在控制台浏览选取本机 `.prj/.wkt`（`proj.prjPath`，文件优先于文本框）；
-  7 参数 Helmert、单锚点、
-  多控制点最小二乘配准（可自动探测源投影），大场景逐顶点重投影消除切面残差；
-  三维转地心坐标、二维转经纬度，前端零补偿
-- ✅ Windows / Linux 双平台，Node.js 服务形态，自带 systemd unit；第三方前端只需调 REST API
+- 支持六类任务：模型转 3D Tiles、地形切片、影像切片、GeoJSON 坐标转换、模型简化转格式、OSGB 倾斜摄影（需以 MGO_WITH_OSG 编译）。
+- 坐标系支持 EPSG、WKT、+proj、.prj 自定义投影：上传模式可直接附带投影文件，服务器路径模式可在控制台选取本机 .prj/.wkt（proj.prjPath，文件优先于文本框）。支持 7 参数 Helmert、单锚点、多控制点最小二乘配准，
+- 支持 Windows / Linux 双平台，Node.js 服务形态，自带 systemd unit；第三方前端通过 REST API 即可接入。
 
-## 🔧 环境要求
+## 环境要求
 
 | 依赖 | 版本要求 | 说明 |
 |------|----------|------|
@@ -53,7 +33,7 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 | MGO 可执行文件 | v0.7.0 | **仓库已内置** Linux x86-64 预编译版（`build/bin/linux/`，含引擎自带 `.so`，RUNPATH 指向 `$ORIGIN`，整目录可随意搬动），clone 即用；探测按系统选目录：Windows 查 `build/bin/windows/`，Linux 查 `build/bin/linux/` |
 | 系统 GIS 运行库 | Ubuntu 24.04 apt | 内置二进制所需的动态库：`sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data` |
 
-## 📦 安装
+## 安装
 
 Linux x86-64 开箱即用——引擎二进制已随仓库提供，装好 Node 和一组运行库即可：
 
@@ -65,7 +45,7 @@ npm ci
 构建产物 [MGO] (https://github.com/Johnly1986/MGO/releases) （`MGOConsole` 及其 `.so`，或 `MGOConsole.exe` 及其 `.dll`）按系统放进本仓库
 `build/bin/linux/` 或 `build/bin/windows/` 即可被自动发现，放别处则用 `MGO_BINARY` 指定。
 
-## 🚀 快速开始
+## 快速开始
 
 ```bash
 npm start                                   # 监听 0.0.0.0:8080
@@ -94,19 +74,6 @@ curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' \
 curl -F 'options={"type":"tiles","modelPaths":["bridge/root.fbx","roadbed/root.fbx"],
               "origin":[498700,2929900,0]}' \
   -F file=@models.zip -F prj=@103d10m.prj http://127.0.0.1:8080/api/v1/jobs
-
-# 或引用服务器本地文件/文件夹（需 MGO_ALLOW_LOCAL_PATH=1，路径限制在 MGO_ALLOWED_ROOTS 内；
-# 本地输入一律【原地处理】，服务端不移动/不复制任何文件）
-#   tiles/mesh：inputPath 可直接指向「模型+贴图」文件夹（tiles 自动全选全部模型；mesh 单模型，
-#   多候选用 modelPaths 消歧）；
-#   tiles 亦支持 inputPaths 多个模型文件路径
-curl -H 'Content-Type: application/json' \
-  -d '{"type":"tiles","inputPath":"/data/city/","proj":{"prjPath":"/data/103d10m.prj"},"origin":[498700,2929900,0]}' \
-  http://127.0.0.1:8080/api/v1/jobs
-curl -H 'Content-Type: application/json' \
-  -d '{"type":"tiles","inputPaths":["/data/bridge/root.fbx","/data/roadbed/root.fbx"],"proj":{"crs":"EPSG:4526"}}' \
-  http://127.0.0.1:8080/api/v1/jobs
-```
 
 随后 `GET /api/v1/jobs/{id}` 查状态，或 `GET /api/v1/jobs/{id}/events` 订阅 SSE 进度。
 任务参数全集（配准、简化细分项）见 [docs/VISUALIZATION_SERVICE_DESIGN.md](docs/VISUALIZATION_SERVICE_DESIGN.md) 附录 A。
