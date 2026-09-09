@@ -54,18 +54,17 @@ curl http://127.0.0.1:8080/api/v1/health    # 返回 {"status":"ok",…} 即启�
 
 浏览器打开 `http://127.0.0.1:8080/console.html`
 
-**API 提交**（不用网页时）：
+**API 提交**：
 
 ```bash
 # multipart 上传
 curl -F 'options={"type":"terrain"}' -F file=@dem.tif http://127.0.0.1:8080/api/v1/jobs
 
-# tiles 多文件：多个 -F file=…，options 里的转换参数对所有文件统一生效，
-# 结果自动合并为 out/tileset.json（3d-tiles-tools）
+# tiles 多文件：多个 -F file=…，options 里的转换参数对所有文件统一生效
 curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' \
   -F file=@tower.fbx -F file=@podium.obj http://127.0.0.1:8080/api/v1/jobs
 
-# 模型带外部贴图时打包成 ZIP（贴图须与模型同目录，否则切片丢贴图）；
+# 模型带外部贴图时打包成 ZIP；
 # tiles 树上传自动识别全部模型（modelPaths 可选：显式收窄到指定文件）
 curl -F 'options={"type":"tiles","modelPaths":["bridge/root.fbx","roadbed/root.fbx"],
               "origin":[498700,2929900,0]}' \
@@ -77,16 +76,6 @@ curl -F 'options={"type":"tiles","modelPaths":["bridge/root.fbx","roadbed/root.f
 **访问控制**：写操作（POST / DELETE）要求客户端 IP 在白名单内，本机 `127.0.0.1` / `::1` 恒放行；
 读接口不设限。要让外部电脑能提交：在服务器本机打开 `whitelist.html` 加入自己的 IP 并保存，
 立即生效，持久化到 `workspace/whitelist.json`，重启不丢。
-
-**配置**：全部有内置默认值，`cp .env.example .env` 覆盖，常用项：
-
-| 变量 | 默认 | 用途 |
-|------|------|------|
-| `MGO_HOST` / `MGO_PORT` | `0.0.0.0` / `8080` | 监听地址 |
-| `MGO_BINARY` | 自动探测 | MGO 可执行文件路径；默认顺序：本仓库 `build/bin/linux/` 或 `build/bin/windows/` |
-| `MGO_TTL_DAYS` | `7` | 成果保留天数 |
-
-真实环境变量优先于 `.env` 文件，键位全集见 [.env.example](.env.example)。
 
 **常驻运行（Linux systemd）**：
 
@@ -104,7 +93,7 @@ npm i cesium@1.111 --no-save && npm run sync:cesium
 
 同步后查看器自动使用本地自托管 Cesium（未同步时回退官方 CDN），全程零外网。Cesium 版本 1.111+。
 
-**开发自测**：`npm test`（桩二进制驱动真实任务管线，无需构建 C++ 引擎）、
+**开发自测**：`npm test`（无需构建 C++ 引擎）、
 `npm run test:ui`（Chromium 页面级回归）、`npm run dev`（热重载）。
 
 ## 📄 许可
