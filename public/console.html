@@ -1358,8 +1358,14 @@ function renderStats(arr) {
 let jobsTotal = null;   // 服务端任务总数（列表只拉当前页）
 let jobStats = null;    // 服务端全量 byStatus（不受分页窗口限制）
 let loading = null;     // 同一时刻只允许一次列表请求在飞（5s 轮询 + 手动刷新 + 操作后补拉会撞车）
-function loadJobs() {
-  if (loading) return loading;
+function loadJobs(force = false) {
+  if (loading) {
+    // 翻页/换页大小不能被在飞请求吞掉：fetchPage 在启动时就捕获了旧的
+    // page/pageSize，直接返回旧 promise 会让这次导航凭空消失（18b 偶发
+    // 超时的根因）——force 时等在飞请求落地后按新参数补抓一次。
+    if (!force) return loading;
+    return loading.then(() => loadJobs());
+  }
   loading = fetchPage().finally(() => { loading = null; });
   return loading;
 }
@@ -1445,18 +1451,18 @@ function renderPager() {
 $('#pager').addEventListener('click', (e) => {
   const hit = e.target.closest('[data-page],[data-new]');
   if (!hit) return;
-  if (hit.dataset.new) { page = 1; pendingNew = 0; loadJobs(); return; }
+  if (hit.dataset.new) { page = 1; pendingNew = 0; loadJobs(true); return; }
   const p = +hit.dataset.page;
   if (!Number.isFinite(p) || p === page || p < 1 || p > pages) return;
   page = p; pendingNew = 0;
-  loadJobs();
+  loadJobs(true);
 });
 $('#pager').addEventListener('change', (e) => {
   if (e.target.id !== 'pageSizeSel') return;
   pageSize = +e.target.value || 10;
   store.set('mgo.pageSize', pageSize);
   page = 1; pendingNew = 0; pagerSig = '';
-  loadJobs();
+  loadJobs(true);
 });
 $('#jobs').addEventListener('click', async (e) => {
   const btn = e.target.closest('button'); const idEl = e.target.closest('[data-copy]');

@@ -634,6 +634,13 @@ test('SSE replays progress and final status', skip, async () => {
   assert.ok(buf.includes('event: hello'));
   assert.ok(buf.includes('event: progress'), 'progress events streamed: ' + buf.slice(0, 200));
   assert.ok(buf.includes('event: status'));
+  // de-mask: success flips progress.percent to 100 in finish() regardless of
+  // the engine output, so ONLY an intermediate event proves the progress
+  // protocol is still parsed end-to-end (fake-mgo drift guard)
+  const pcts = [...buf.matchAll(/"type":"progress","data":\{[^}]*"percent":(\d+)/g)]
+    .map((m) => Number(m[1]));
+  assert.ok(pcts.some((p) => p > 0 && p < 100),
+    `expected an intermediate progress percent before success, got [${pcts.join(', ')}]`);
 });
 
 test('DELETE removes job and workspace', skip, async () => {

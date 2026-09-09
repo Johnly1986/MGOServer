@@ -19,7 +19,8 @@ const TIF = process.env.UI_TIF
   || path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'test', 'fixtures', 'test_terrain.tif');
 if (!fs.existsSync(TIF)) {
   console.log(`(fixture ${TIF} missing — generating)`);
-  execFileSync('python3', [path.join('scripts', 'generate-test-tif.py')], { stdio: 'inherit' });
+  const REPO = path.dirname(fileURLToPath(import.meta.url));
+  execFileSync('python3', [path.join(REPO, 'scripts', 'generate-test-tif.py')], { stdio: 'inherit' });
   if (!fs.existsSync(TIF)) {
     console.error(`cannot run UI test without the terrain fixture: ${TIF}\n`
       + '  python3 scripts/generate-test-tif.py   (or set UI_TIF=/path/to/file.tif)');
@@ -58,6 +59,12 @@ const wlRestore = async () => {
     body: JSON.stringify({ whitelist: wlSnapshot }),
   });
 };
+
+// Per-run unique fs-probe fixture name: two concurrent runs (or a crashed
+// predecessor) must never share/collide on the same directory under the
+// deployment's allowed root.
+const FIXNAME = 'ui-fsprobe-' + process.pid;
+const ZIPNAME = `ui_res_tree-${process.pid}`;   // /tmp 暂存 zip 同样按运行唯一
 
 const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
@@ -184,7 +191,9 @@ await step('8 viewer 深链加载真实 quantized-mesh 地形（WebGL 渲染 + �
   const body = await (await fetch(`${BASE}/api/v1/jobs/${jobId}/artifacts`)).json();
   const arts = body.artifacts || body;
   const url = arts.find(a => a.role === 'terrain').viewer.url; // dir, not the layer.json itself
-  const vp = await newPage('/viewer.html?asset=' + encodeURIComponent(url) + '&type=terrain');
+  let vp;
+  try {
+    vp = await newPage('/viewer.html?asset=' + encodeURIComponent(url) + '&type=terrain');
   await vp.waitForFunction(() => /已加载/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
   await vp.waitForTimeout(2500);
   const size = await vp.$eval('#cesiumContainer canvas', (c) => [c.width, c.height]);
@@ -196,7 +205,9 @@ await step('8 viewer 深链加载真实 quantized-mesh 地形（WebGL 渲染 + �
   if (tileReq !== 200) throw new Error('layer.json ' + tileReq);
   if (realErrs(vp).length) throw new Error('viewer JS 错误: ' + realErrs(vp).join(' ;; '));
   await vp.screenshot({ path: '/tmp/ui_terrain.png' });
-  await vp.close();   // free the WebGL render loop — leaked viewers starve later steps
+  } finally {
+    await vp?.close();   // free the WebGL render loop — leaked viewers starve later steps
+  }
 });
 
 /* ---------- 8b. tiles multi-file through the console ---------- */
@@ -268,12 +279,13 @@ await step('8c tiles+贴图 ZIP（文件树上传）：贴图与模型同层保�
     ['g2/cubeB.obj', fs.readFileSync(OBJ_B)],
     ['g2/tex.png', Buffer.from('PNGFAKE')],
   ]);
-  fs.writeFileSync('/tmp/ui_res_tree.zip', zip2);
+  const ZIP_A = `/tmp/${ZIPNAME}.zip`;
+  fs.writeFileSync(ZIP_A, zip2);
   await page.selectOption('#type', 'tiles');
   await page.waitForSelector('#file');
-  await page.setInputFiles('#file', '/tmp/ui_res_tree.zip');   // 统一入口：ZIP 直接进文件区
-  await page.waitForFunction(() => /ui_res_tree\.zip.*ZIP 文件树/.test(document.querySelector('#dropMeta').textContent),
-    null, { timeout: 5000 });
+  await page.setInputFiles('#file', ZIP_A);   // 统一入口：ZIP 直接进文件区
+  await page.waitForFunction((zn) => new RegExp(zn + '\\.zip.*ZIP 文件树').test(document.querySelector('#dropMeta').textContent), ZIPNAME,
+    { timeout: 5000 });
   if (await page.$('#modelPaths')) throw new Error('tiles 不应再出现模型路径输入框');
   const before = new Set(await page.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id)));
   await page.click('#submit');
@@ -307,8 +319,9 @@ await step('8c tiles+贴图 ZIP（文件树上传）：贴图与模型同层保�
     ['only/cubeA.obj', fs.readFileSync(OBJ_A)],
     ['only/tex.png', Buffer.from('PNGFAKE')],
   ]);
-  fs.writeFileSync('/tmp/ui_res_tree1.zip', zip1);
-  await page.setInputFiles('#file', '/tmp/ui_res_tree1.zip');
+  const ZIP_B = `/tmp/${ZIPNAME}-1.zip`;
+  fs.writeFileSync(ZIP_B, zip1);
+  await page.setInputFiles('#file', ZIP_B);
   const before2 = new Set(await page.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id)));
   await page.click('#submit');
   const autoId = await page.waitForFunction((old) => {
@@ -332,7 +345,9 @@ await step('9 viewer 加载真实 3D Tiles tileset（优先 8b 的合并产物�
   const t = list.items.find((j) => j.type === 'tiles' && j.status === 'succeeded');
   if (!t) skip('无成功 tiles 任务可复用 — 需先跑过一例真实模型（../MGO/Data 私有回归数据不随仓库分发）');
   const url = t.artifacts.find(a => a.role === '3dtiles').url;
-  const vp = await newPage('/viewer.html?asset=' + encodeURIComponent(url) + '&type=3dtiles');
+  let vp;
+  try {
+    vp = await newPage('/viewer.html?asset=' + encodeURIComponent(url) + '&type=3dtiles');
   await vp.waitForFunction(() => /已加载/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
   await vp.waitForTimeout(1500);
   await vp.screenshot({ path: '/tmp/ui_tiles.png' });
@@ -346,12 +361,15 @@ await step('9 viewer 加载真实 3D Tiles tileset（优先 8b 的合并产物�
       if (r.status !== 200) throw new Error('外部子瓦片集不可达: ' + c.content.uri);
     }
   }
-  await vp.close();
+  } finally {
+    await vp?.close();
+  }
 });
 
 /* ---------- 10. responsive mobile ---------- */
 await step('10 移动端 390px：单列、表格滚动、无横向溢出、viewer HUD 可折叠', async () => {
   const mc = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+  try {
   const p = await mc.newPage();
   await p.goto(BASE + '/console.html', { waitUntil: 'networkidle' });
   const cols = await p.$eval('main', (n) => getComputedStyle(n).gridTemplateColumns.split(' ').length);
@@ -370,7 +388,9 @@ await step('10 移动端 390px：单列、表格滚动、无横向溢出、viewe
     null, { timeout: 60000 });
   await mv.click('#hudToggle');
   await mv.waitForFunction(() => !document.querySelector('#hud').classList.contains('collapsed'));
-  await mc.close();
+  } finally {
+    await mc.close();
+  }
 });
 
 /* ---------- 11. non-whitelisted IP rejected (X-Forwarded-For) ---------- */
@@ -413,6 +433,7 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
 /* ---------- 13-23. product-polish features (redesigned UI) ---------- */
 {
   const consolePage = await newPage('/console.html');
+  try {
 
   await step('13 任务统计条（计数与总数）', async () => {
     await consolePage.waitForFunction(() => /成功/.test(document.querySelector('#stats').textContent));
@@ -525,9 +546,13 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     const txt = await consolePage.$eval('#jobs tr .badge', (n) => n.textContent);
     if (!/成功|运行中|排队中|失败/.test(txt)) throw new Error('徽章文案: ' + txt);
   });
-  await consolePage.close();
+  } finally {
+    await consolePage.close();   // 中途失败也不泄漏控制台页
+  }
 
-  const vp = await newPage('/viewer.html?asset=' + encodeURIComponent('/ws/' + jobId + '/out') + '&type=terrain');
+  let vp;
+  try {
+  vp = await newPage('/viewer.html?asset=' + encodeURIComponent('/ws/' + jobId + '/out') + '&type=terrain');
   await vp.waitForFunction(() => /已加载/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
   await step('20 viewer 图层列表 + 计数条', async () => {
     await vp.waitForSelector('#layerList li');
@@ -555,11 +580,15 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     const wrap = await vp.$eval('#layerWrap', (n) => getComputedStyle(n).display);
     if (wrap !== 'none') throw new Error('空图层分组未隐藏');
   });
-  await vp.close();
+  } finally {
+    await vp?.close();   // WebGL 循环泄漏会饿死后续步骤
+  }
 
   /* ---------- 24. free online base imagery ---------- */
   await step('24 免费在线底图：切换源 + 瓦片请求 + 归属标注 + 关闭', async () => {
-    const bp = await newPage('/viewer.html?asset=' + encodeURIComponent('/ws/' + jobId + '/out') + '&type=terrain&basemap=none');
+    let bp;
+    try {
+    bp = await newPage('/viewer.html?asset=' + encodeURIComponent('/ws/' + jobId + '/out') + '&type=terrain&basemap=none');
     await bp.waitForFunction(() => /已加载/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
     const tileReqs = [];
     bp.on('request', (r) => {
@@ -573,7 +602,9 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     await bp.selectOption('#basemap', 'none');
     await bp.waitForFunction(() => /底图：无/.test(document.querySelector('#status').textContent));
     if (realErrs(bp).length) throw new Error('底图切换 JS 错误: ' + realErrs(bp).join(' ;; '));
-    await bp.close();
+    } finally {
+      await bp?.close();
+    }
   });
 
   /* ---------- 26. FilePicker 组件：上传 ↔ 服务器路径（弹框增强版） ---------- */
@@ -584,11 +615,21 @@ await step('26 FilePicker：模式切换 + 跨目录多选/过滤/面包屑 + �
     headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   const root = (b0.roots ?? []).find((r) => r.ok && fs.existsSync(r.path));
   if (!root) skip('无可用允许根（MGO_ALLOWED_ROOTS 全部缺失），无法建浏览夹具');
-  const FIX = path.join(root.path, 'ui-fsprobe');
+  const FIX = path.join(root.path, FIXNAME);
   fs.mkdirSync(path.join(FIX, 'site', 'deep'), { recursive: true });
-  fs.copyFileSync('test/fixtures/cubeA.obj', path.join(FIX, 'site', 'cubeA.obj'));
-  fs.copyFileSync('test/fixtures/cubeB.obj', path.join(FIX, 'site', 'deep', 'cubeB.obj'));
+  fs.copyFileSync(OBJ_A, path.join(FIX, 'site', 'cubeA.obj'));
+  fs.copyFileSync(OBJ_B, path.join(FIX, 'site', 'deep', 'cubeB.obj'));
   fs.writeFileSync(path.join(FIX, 'site', 'notes.txt'), 'not a model');   // 过滤/只看可选夹具
+  // sweep leftover probe dirs from crashed/killed runs (unique names still
+  // accumulate on a long-lived deployment) — anything older than a day is dead
+  for (const e of fs.readdirSync(root.path)) {
+    if (!e.startsWith('ui-fsprobe-')) continue;
+    const p2 = path.join(root.path, e);
+    try {
+      if (Date.now() - fs.statSync(p2).mtimeMs > 86_400_000) fs.rmSync(p2, { recursive: true, force: true });
+    } catch { /* raced */ }
+  }
+  try {
   await page.setViewportSize({ width: 1280, height: 900 });                 // 步骤 10 会留在移动端视口
   await page.goto(BASE + '/console.html', { waitUntil: 'networkidle' });   // 前面步骤可能停在 viewer 页
   await page.waitForSelector('#type');
@@ -611,8 +652,8 @@ await step('26 FilePicker：模式切换 + 跨目录多选/过滤/面包屑 + �
   await page.waitForSelector('#fsModal .fsItem');
   // 根 → ui-fsprobe/ → site/
   await page.click(`#fsModal .fsItem:text-is("📁 ${root.name}")`);
-  await page.waitForSelector('.fsItem:text-is("📁 ui-fsprobe")');
-  await page.click('.fsItem:text-is("📁 ui-fsprobe")');
+  await page.waitForSelector(`.fsItem:text-is("📁 ${FIXNAME}")`);
+  await page.click(`.fsItem:text-is("📁 ${FIXNAME}")`);
   await page.waitForSelector('.fsItem:text-is("📁 site")');
   await page.click('.fsItem:text-is("📁 site")');
   await page.waitForSelector('.fsItem:has-text("cubeA.obj")');
@@ -641,7 +682,8 @@ await step('26 FilePicker：模式切换 + 跨目录多选/过滤/面包屑 + �
   if (!(await page.isVisible('#fsModal'))) throw new Error('加入选中后弹框不应关闭（跨目录续选）');
   const val = await page.inputValue('#inputPath');
   const parts = val.split(',').map((s) => s.trim());
-  if (parts.length !== 2 || !/ui-fsprobe\/site\/deep\/cubeB\.obj$/.test(parts[0]) || !/ui-fsprobe\/site\/cubeA\.obj$/.test(parts[1]))
+  const reFix = FIXNAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (parts.length !== 2 || !new RegExp(`${reFix}/site/deep/cubeB\\.obj$`).test(parts[0]) || !new RegExp(`${reFix}/site/cubeA\\.obj$`).test(parts[1]))
     throw new Error('跨目录多选回填异常: ' + val);
   // 已选中不可再选：已加入的 cubeA 行置灰划线禁选，强点也不改路径框
   const usedA = page.locator('#fsList .fsItem.used', { hasText: 'cubeA.obj' });
@@ -682,15 +724,19 @@ await step('26 FilePicker：模式切换 + 跨目录多选/过滤/面包屑 + �
   await page.click('#fsBrowseBtn');
   await page.waitForSelector('#fsModal .fsItem');
   await page.click(`#fsModal .fsItem:text-is("📁 ${root.name}")`);
-  await page.waitForSelector('.fsItem:text-is("📁 ui-fsprobe")');
-  await page.click('.fsItem:text-is("📁 ui-fsprobe")');
+  await page.waitForSelector(`.fsItem:text-is("📁 ${FIXNAME}")`);
+  await page.click(`.fsItem:text-is("📁 ${FIXNAME}")`);
   await page.waitForSelector('.fsItem:text-is("📁 site")');
   await page.click('.fsItem:text-is("📁 site")');
   await page.waitForSelector('#fsUseDir:not([hidden])');
   await page.click('#fsUseDir');
   const dirVal = await page.inputValue('#inputPath');
-  if (!/ui-fsprobe\/site$/.test(dirVal)) throw new Error('目录选择回填异常: ' + dirVal);
+  if (!new RegExp(`${reFix}/site$`).test(dirVal)) throw new Error('目录选择回填异常: ' + dirVal);
   fs.rmSync(path.join(FIX, 'site', 'deep', 'cubeB.obj'), { force: true });   // 26b 在 site/ 再放投影夹具
+  } finally {
+    // FIX 故意保留给 26b 复用（cubeA.obj 是它的模型夹具）；最终清理在 26b 的
+    // finally 里做，中途失败则由下一次运行的陈旧清扫兜底
+  }
 });
 
 /* ---------- 26b. 服务器路径模式：投影文件（proj.prjPath）生效 ---------- */
@@ -701,7 +747,8 @@ await step('26b 路径模式投影：浏览选 .prj → proj.prjPath 进 argv；
     headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   const root = (b0.roots ?? []).find((r) => r.ok && fs.existsSync(r.path));
   if (!root) skip('无可用允许根');
-  const FIX = path.join(root.path, 'ui-fsprobe');
+  const FIX = path.join(root.path, FIXNAME);
+  try {
   // 合法 WKT：WGS84 地理坐标 .prj（真实引擎可解析）
   fs.writeFileSync(path.join(FIX, 'site', 'wgs84.prj'),
     'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,'
@@ -717,8 +764,8 @@ await step('26b 路径模式投影：浏览选 .prj → proj.prjPath 进 argv；
   await page.click('#fsBrowseBtn');
   await page.waitForSelector('#fsModal .fsItem');
   await page.click(`#fsModal .fsItem:text-is("📁 ${root.name}")`);
-  await page.waitForSelector('.fsItem:text-is("📁 ui-fsprobe")');
-  await page.click('.fsItem:text-is("📁 ui-fsprobe")');
+  await page.waitForSelector(`.fsItem:text-is("📁 ${FIXNAME}")`);
+  await page.click(`.fsItem:text-is("📁 ${FIXNAME}")`);
   await page.waitForSelector('.fsItem:text-is("📁 site")');
   await page.click('.fsItem:text-is("📁 site")');
   await page.waitForSelector('.fsItem:has-text("cubeA.obj")');
@@ -737,8 +784,8 @@ await step('26b 路径模式投影：浏览选 .prj → proj.prjPath 进 argv；
   await page.click('#paramForm .pathOnly button');
   await page.waitForSelector('#fsModal:not([hidden])');
   await page.click(`#fsModal .fsItem:text-is("📁 ${root.name}")`);
-  await page.waitForSelector('.fsItem:text-is("📁 ui-fsprobe")');
-  await page.click('.fsItem:text-is("📁 ui-fsprobe")');
+  await page.waitForSelector(`.fsItem:text-is("📁 ${FIXNAME}")`);
+  await page.click(`.fsItem:text-is("📁 ${FIXNAME}")`);
   await page.waitForSelector('.fsItem:text-is("📁 site")');
   await page.click('.fsItem:text-is("📁 site")');
   await page.waitForSelector('.fsItem:has-text("wgs84.prj")');
@@ -802,6 +849,9 @@ await step('26b 路径模式投影：浏览选 .prj → proj.prjPath 进 argv；
     throw new Error('argv 未携带 --prj 投影文件:\n' + argv);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('#logModal').hidden, null, { timeout: 5000 });
+  } finally {
+    fs.rmSync(FIX, { recursive: true, force: true });   // 全套件最后一步：无论成败清走夹具根
+  }
 });
 
 /* ---------- 25. whitelist management page (localhost) ---------- */
