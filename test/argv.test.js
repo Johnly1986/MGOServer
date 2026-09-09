@@ -32,6 +32,25 @@ test('tiles: inline cps prepared as file overrides path param', () => {
   assert.ok(args.includes('--cps') && args.includes('/w/controlpoints.csv'));
 });
 
+test('uploaded prj file wins over proj.crs / proj.prjPath (prjFile priority)', () => {
+  const params = P({ type: 'tiles', proj: { crs: 'EPSG:4547' } });
+  const args = buildArgs({ type: 'tiles', params },
+    { input: '/in/a.fbx', out: '/out', prjFile: '/w/input/_projection.prj' });
+  assert.ok(args.includes('--prj') && args.includes('/w/input/_projection.prj'));
+  assert.ok(!args.includes('EPSG:4547'), 'uploaded file must supersede the inline crs');
+  const mesh = buildArgs({ type: 'mesh', params: { proj: { prjPath: '/data/x.prj' } } },
+    { input: '/in/a.fbx', out: '/out/a.glb', prjFile: '/w/_projection.wkt' });
+  assert.equal(mesh.at(mesh.indexOf('-p') + 1), '/w/_projection.wkt',
+    'mesh: staged file wins over prjPath too');
+});
+
+test('proj schema: exactly one of crs | prjPath', () => {
+  assert.equal(jobSchema.safeParse({ type: 'tiles', proj: { crs: 'EPSG:4547' } }).success, true);
+  assert.equal(jobSchema.safeParse({ type: 'tiles', proj: { prjPath: '/d/x.prj' } }).success, true);
+  assert.equal(jobSchema.safeParse({ type: 'tiles', proj: { crs: 'EPSG:4547', prjPath: '/d/x.prj' } }).success, false);
+  assert.equal(jobSchema.safeParse({ type: 'tiles', proj: {} }).success, false);
+});
+
 test('terrain: samples/maxLod/no-normals + implicit -v', () => {
   const params = P({ type: 'terrain', maxLod: 8, samplesPerTile: 65, normals: false,
     proj: { prjPath: '/data/x.prj' } });

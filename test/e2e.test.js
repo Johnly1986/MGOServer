@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import yazl from 'yazl';
 import { pipeline } from 'node:stream/promises';
@@ -650,4 +651,401 @@ test('DELETE removes job and workspace', skip, async () => {
   const gone = await api('GET', `/api/v1/jobs/${j.id}`);
   assert.equal(gone.status, 404);
   await assert.rejects(fsp.stat(path.join(tmp, 'ws', 'jobs', j.id)));
+});
+
+/* ---- model + side-car texture tree uploads (tiles / mesh) ----
+ * The engine resolves external textures relative to the MODEL's directory,
+ * so a folder/ZIP upload must land in input/ with its layout intact. */
+
+test('tiles relPaths tree auto-detects the single model, textures stay beside it', skip, async () => {
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({
+    type: 'tiles',
+    relPaths: ['site/root.fbx', 'site/tex01.png', 'site/lua/worn.jpg'],
+  }));
+  fd.append('file', new Blob(['FBXBIN']), 'f_000001');
+  fd.append('file', new Blob(['PNG1']), 'f_000002');
+  fd.append('file', new Blob(['JPG1']), 'f_000003');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.equal(j.inputName, 'site/root.fbx');
+  const done = await waitTerminal(j.id, 15000);
+  assert.equal(done.status, 'succeeded');
+
+  const inputDir = path.join(tmp, 'ws', 'jobs', j.id, 'input');
+  for (const rel of ['site/root.fbx', 'site/tex01.png', 'site/lua/worn.jpg']) {
+    assert.ok((await fsp.stat(path.join(inputDir, rel))).isFile(), `missing ${rel}`);
+  }
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=300`)).json();
+  const svc = lines.filter((l) => l.startsWith('[Service] argv: tiles'));
+  assert.equal(svc.length, 1);
+  assert.match(svc[0], /-i \S+\/input\/site\/root\.fbx -o \S+\/out\/site_root( |$)/);
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.equal(merged.root.children.length, 1);
+  assert.equal(merged.root.children[0].content.uri, 'site_root/tileset.json');
+});
+
+test('multi-model tree auto-takes all models; stems fold the folder name; unified params', skip, async () => {
+  const mk = (extra) => {
+    const fd = new FormData();
+    fd.append('options', JSON.stringify({
+      type: 'tiles',
+      relPaths: ['bridge/root.fbx', 'bridge/zhuipo.png', 'roadbed/root.fbx', 'roadbed/concret.png'],
+      ...(extra ?? {}),
+    }));
+    for (let i = 1; i <= 4; i++) fd.append('file', new Blob([`B${i}`]), `f_00000${i}`);
+    return fd;
+  };
+  // 无 modelPaths：tiles 自动把树内全部模型逐一转换再合并（控制台已去掉模型路径框）
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: mk({ origin: [498700, 2929900, 0] }) });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.deepEqual(j.inputNames, ['bridge/root.fbx', 'roadbed/root.fbx']);
+  assert.equal(j.inputName, 'bridge/root.fbx (+1)');
+  const done = await waitTerminal(j.id, 20000);
+  assert.equal(done.status, 'succeeded');
+
+  const inputDir = path.join(tmp, 'ws', 'jobs', j.id, 'input');
+  for (const rel of ['bridge/root.fbx', 'bridge/zhuipo.png', 'roadbed/root.fbx', 'roadbed/concret.png']) {
+    assert.ok((await fsp.stat(path.join(inputDir, rel))).isFile(), `missing ${rel}`);
+  }
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=300`)).json();
+  const svc = lines.filter((l) => l.startsWith('[Service] argv: tiles'));
+  assert.equal(svc.length, 2);
+  assert.match(svc[0], /-i \S+\/input\/bridge\/root\.fbx -o \S+\/out\/bridge_root( |$)/);
+  assert.match(svc[1], /-i \S+\/input\/roadbed\/root\.fbx -o \S+\/out\/roadbed_root( |$)/);
+  const norm = (a) => a.replace(/-i \S+ -o \S+/, '-i <I> -o <O>');
+  assert.equal(norm(svc[0]), norm(svc[1]), '两个模型必须使用完全一致的转换参数');
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.deepEqual(merged.root.children.map((c) => c.content.uri).sort(),
+    ['bridge_root/tileset.json', 'roadbed_root/tileset.json']);
+
+  // 显式 modelPaths（API 仍支持）可收窄到一个模型
+  const r2 = await fetch(base + '/api/v1/jobs', { method: 'POST',
+    body: mk({ modelPaths: ['bridge/root.fbx'] }) });
+  assert.equal(r2.status, 201);
+  const j2 = JSON.parse(await r2.text());
+  assert.equal(j2.inputName, 'bridge/root.fbx');
+  assert.deepEqual(j2.inputNames, ['bridge/root.fbx']);
+  const done2 = await waitTerminal(j2.id, 20000);
+  assert.equal(done2.status, 'succeeded');
+  const merged2 = await (await fetch(base + `/ws/${j2.id}/out/tileset.json`)).json();
+  assert.deepEqual(merged2.root.children.map((c) => c.content.uri), ['bridge_root/tileset.json']);
+});
+
+test('tiles zip upload extracts the tree and keeps textures resolvable', skip, async () => {
+  const zip = await makeZip([['site/root.fbx', 'FBXBIN'], ['site/tex01.png', 'PNG1']]);
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob([zip], { type: 'application/zip' }), 'site.zip');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.equal(j.inputName, 'site/root.fbx');
+  const done = await waitTerminal(j.id, 15000);
+  assert.equal(done.status, 'succeeded');
+  assert.ok((await fsp.stat(path.join(tmp, 'ws', 'jobs', j.id, 'input', 'site', 'tex01.png'))).isFile());
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.equal(merged.root.children[0].content.uri, 'site_root/tileset.json');
+});
+
+test('mesh zip tree upload feeds -i with the in-tree model path', skip, async () => {
+  const zip = await makeZip([['m/a.fbx', 'FBX'], ['m/tex.png', 'P']]);
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'mesh' }));
+  fd.append('file', new Blob([zip], { type: 'application/zip' }), 'm.zip');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.equal(j.inputName, 'm/a.fbx');
+  const done = await waitTerminal(j.id);
+  assert.equal(done.status, 'succeeded');
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=300`)).json();
+  const argvLine = lines.find((l) => l.startsWith('argv: mesh'));
+  assert.ok(argvLine, 'fake binary logged mesh argv');
+  assert.match(argvLine, /-i \S+\/input\/m\/a\.fbx/);
+});
+
+/* ---- projection sidecar on the tree channel + proj.prjPath on the path channel ---- */
+
+test('zip tree upload + prj field → --prj lands on the staged _projection.prj', skip, async () => {
+  const zip = await makeZip([['site/root.fbx', 'FBXBIN'], ['site/tex01.png', 'PNG1']]);
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob([zip], { type: 'application/zip' }), 'site.zip');
+  fd.append('prj', new Blob(['PROJCS["CGCS2000 / 3-degree GK CM 120E"]']), 'cgcs2000.prj');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  const done = await waitTerminal(j.id, 15000);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=300`)).json();
+  const argvLine = lines.find((l) => l.startsWith('[Service] argv: tiles'));
+  assert.ok(argvLine, 'service argv audit line present');
+  assert.match(argvLine, /--prj \S+\/input\/_projection\.prj/);
+  assert.ok((await fsp.stat(path.join(tmp, 'ws', 'jobs', j.id, 'input', '_projection.prj'))).isFile(),
+    'side-car projection file kept in the job input dir');
+});
+
+test('server-path mode: proj.prjPath feeds --prj, local input processed in place', skip, async () => {
+  const dir = path.join(tmp, 'prjroot');
+  await fsp.mkdir(dir, { recursive: true });
+  const prj = path.join(dir, 'site.prj');
+  await fsp.writeFile(prj, 'PROJCS["CGCS2000 / 3-degree GK CM 120E"]');
+  const model = path.join(tmp, 'pm.fbx');
+  await fsp.writeFile(model, 'FBXK');
+  const r = await api('POST', '/api/v1/jobs', {
+    type: 'tiles', inputPath: model, proj: { prjPath: prj },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  const done = await waitTerminal(r.json.id, 15000);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+  const full = await (await fetch(base + `/api/v1/jobs/${r.json.id}`)).json();
+  const used = full.params.proj.prjPath;          // realpath-canonicalised by checkParamPaths
+  assert.match(used, /site\.prj$/);
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${r.json.id}/log?tail=300`)).json();
+  const argvLine = lines.find((l) => l.startsWith('[Service] argv: tiles'));
+  assert.ok(argvLine, 'service argv audit line present');
+  assert.ok(argvLine.includes(`--prj ${used}`), argvLine);
+  // local inputs are NEVER moved/copied: model and .prj stay at their origin
+  assert.deepEqual(await fsp.readdir(path.join(tmp, 'ws', 'jobs', r.json.id, 'input')), []);
+});
+
+test('proj validation: crs | prjPath exactly one, prjPath stays inside allowed roots', skip, async () => {
+  const model = path.join(tmp, 'pv.fbx');
+  await fsp.writeFile(model, 'FBXK');
+  const both = await api('POST', '/api/v1/jobs', {
+    type: 'tiles', inputPath: model,
+    proj: { crs: 'EPSG:4547', prjPath: path.join(tmp, 'prjroot', 'site.prj') },
+  });
+  assert.equal(both.status, 422);
+  assert.equal(both.json.error.code, 'VALIDATION');
+  assert.ok(JSON.stringify(both.json.error.details).includes('exactly one'));
+  // an existing file OUTSIDE the roots must be refused by the localpath gate (403)
+  const outside = await api('POST', '/api/v1/jobs', {
+    type: 'tiles', inputPath: model, proj: { prjPath: '/etc/hostname' },
+  });
+  assert.equal(outside.status, 403);
+});
+
+test('tree channel validation: not-in-tree / no model / wrong types', skip, async () => {
+  const fd1 = new FormData();
+  fd1.append('options', JSON.stringify({
+    type: 'tiles', relPaths: ['a/root.fbx', 'a/t.png'], modelPaths: ['b/root.fbx'] }));
+  fd1.append('file', new Blob(['x']), 'f1');
+  fd1.append('file', new Blob(['y']), 'f2');
+  const r1 = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd1 });
+  assert.equal(r1.status, 422);
+  assert.equal((await r1.json()).error.code, 'MODEL_NOT_IN_TREE');
+
+  const fd2 = new FormData();
+  fd2.append('options', JSON.stringify({ type: 'tiles', relPaths: ['a/tex.png', 'a/tex2.png'] }));
+  fd2.append('file', new Blob(['x']), 'f1');
+  fd2.append('file', new Blob(['y']), 'f2');
+  const r2 = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd2 });
+  assert.equal(r2.status, 422);
+  assert.equal((await r2.json()).error.code, 'NO_MODEL_IN_TREE');
+
+  const fd3 = new FormData();
+  fd3.append('options', JSON.stringify({ type: 'terrain', relPaths: ['t/dem.tif'] }));
+  fd3.append('file', new Blob(['x']), 'f1');
+  const r3 = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd3 });
+  assert.equal(r3.status, 400);
+  assert.equal((await r3.json()).error.code, 'INPUT_TYPE');
+
+  // modelPath on a FLAT upload → BAD_OPTIONS
+  const fd4 = new FormData();
+  fd4.append('options', JSON.stringify({ type: 'tiles', modelPath: 'a.fbx' }));
+  fd4.append('file', new Blob(['x']), 'a.fbx');
+  const r4 = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd4 });
+  assert.equal(r4.status, 422);
+  assert.equal((await r4.json()).error.code, 'BAD_OPTIONS');
+
+  // mesh (single-model semantics) still demands disambiguation for multi-candidate trees
+  const fd5 = new FormData();
+  fd5.append('options', JSON.stringify({ type: 'mesh', relPaths: ['a/x.fbx', 'b/y.fbx'] }));
+  fd5.append('file', new Blob(['x']), 'f1');
+  fd5.append('file', new Blob(['y']), 'f2');
+  const r5 = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd5 });
+  assert.equal(r5.status, 422);
+  assert.equal((await r5.json()).error.code, 'MODEL_AMBIGUOUS');
+});
+
+/* ---- local path inputs are processed IN PLACE (never moved/copied);
+ *      tiles/mesh may point inputPath at a model+textures FOLDER ---- */
+
+async function mkTree(files) {
+  const root = await fsp.mkdtemp(path.join(tmp, 'lt-'));
+  for (const [rel, content] of files) {
+    const p = path.join(root, rel);
+    await fsp.mkdir(path.dirname(p), { recursive: true });
+    await fsp.writeFile(p, content);
+  }
+  return root;
+}
+
+test('tiles inputPath on a local folder converts IN PLACE (nothing copied)', skip, async () => {
+  const root = await mkTree([['site/root.fbx', 'FBXBIN'], ['site/tex01.png', 'PNG']]);
+  const dir = path.join(root, 'site');
+  const r = await fetch(base + '/api/v1/jobs', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'tiles', inputPath: dir }),
+  });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.equal(j.inputName, 'root.fbx'); // auto-detected single model
+  const done = await waitTerminal(j.id, 15000);
+  assert.equal(done.status, 'succeeded');
+
+  // in place: sources untouched, job input/ stays EMPTY (no move, no copy)
+  assert.ok(fs.existsSync(path.join(dir, 'tex01.png')), 'textures must stay where they are');
+  assert.deepEqual(await fsp.readdir(path.join(tmp, 'ws', 'jobs', j.id, 'input')), []);
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=300`)).json();
+  const svc = lines.find((l) => l.startsWith('[Service] argv: tiles'));
+  assert.ok(svc);
+  assert.match(svc, new RegExp(`-i ${dir.replace(/[\\/^$.+*?()[]{}|]/g, '\\\\$&')}\\/root\\.fbx`));
+  assert.ok(!svc.includes(`${tmp}/ws/jobs/${j.id}/input`), 'converted path leaked into workspace copy');
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.equal(merged.root.children[0].content.uri, 'root/tileset.json');
+});
+
+test('multi-model local folder: tiles auto-takes every model, in place', skip, async () => {
+  const root = await mkTree([
+    ['a/root.fbx', 'A'], ['a/tex.png', 'A'], ['b/root.fbx', 'B'], ['b/tex.png', 'B'],
+  ]);
+  const body = (extra) => JSON.stringify({ type: 'tiles', inputPath: root, ...(extra ?? {}) });
+  const r = await fetch(base + '/api/v1/jobs', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: body(),
+  });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.deepEqual(j.inputNames, ['a/root.fbx', 'b/root.fbx']);
+  const done = await waitTerminal(j.id, 20000);
+  assert.equal(done.status, 'succeeded');
+  assert.ok(fs.existsSync(path.join(root, 'a', 'tex.png')), 'source tree must remain intact');
+  const merged = await (await fetch(base + `/ws/${j.id}/out/tileset.json`)).json();
+  assert.deepEqual(merged.root.children.map((c) => c.content.uri).sort(),
+    ['a_root/tileset.json', 'b_root/tileset.json']);
+});
+
+test('mesh inputPath on a local folder converts the single model in place', skip, async () => {
+  const root = await mkTree([['m/a.fbx', 'FBX'], ['m/tex.png', 'P']]);
+  const r = await fetch(base + '/api/v1/jobs', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'mesh', inputPath: path.join(root, 'm') }),
+  });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  assert.equal(j.inputName, 'a.fbx');
+  const done = await waitTerminal(j.id);
+  assert.equal(done.status, 'succeeded');
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=300`)).json();
+  const argv = lines.find((l) => l.startsWith('argv: mesh'));
+  assert.match(argv, new RegExp(`-i ${path.join(root, 'm', 'a.fbx').replace(/[\\/^$.+*?()[]{}|]/g, '\\\\$&')}( |$)`));
+});
+
+test('local-folder channel guards: inputPaths entries stay files, other types reject dirs', skip, async () => {
+  const root = await mkTree([['x/root.fbx', 'F'], ['y/dem.tif', 'T']]);
+  // inputPaths (multi, files) must not smuggle a directory entry
+  const r1 = await fetch(base + '/api/v1/jobs', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'tiles', inputPaths: [path.join(root, 'x'), path.join(root, 'x', 'root.fbx')] }),
+  });
+  assert.equal(r1.status, 400);
+  assert.match((await r1.json()).error.message, /not a file/);
+  // terrain inputPath cannot be a folder (only tiles/mesh tree mode)
+  const r2 = await fetch(base + '/api/v1/jobs', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'terrain', inputPath: path.join(root, 'x') }),
+  });
+  assert.equal(r2.status, 400);
+  assert.match((await r2.json()).error.message, /not a file/);
+  // modelPaths on a plain FILE inputPath → BAD_OPTIONS
+  const r3 = await fetch(base + '/api/v1/jobs', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'tiles', inputPath: path.join(root, 'x', 'root.fbx'), modelPaths: ['x/root.fbx'] }),
+  });
+  assert.equal(r3.status, 422);
+  assert.equal((await r3.json()).error.code, 'BAD_OPTIONS');
+});
+
+/* ---------- server file browse (console "服务器路径" picker) ---------- */
+async function browse (payload) {
+  const r = await fetch(base + '/api/v1/fs/browse', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  });
+  return { status: r.status, body: await r.json() };
+}
+
+test('fs browse: roots, sorted entries with sizes, dotfiles hidden, parent within root', skip, async () => {
+  const dir = await fsp.mkdtemp(path.join(tmp, 'browse-'));
+  await fsp.mkdir(path.join(dir, 'zz-sub'));
+  await fsp.mkdir(path.join(dir, 'aa-sub'));
+  await fsp.writeFile(path.join(dir, 'b.fbx'), 'xxx');
+  await fsp.writeFile(path.join(dir, 'a.obj'), 'y');
+  await fsp.writeFile(path.join(dir, '.secret'), 'no');
+
+  const roots = (await browse({ path: '' })).body;
+  assert.equal(roots.cwd, null);
+  const realTmp = await fsp.realpath(tmp);
+  assert.ok(roots.roots.some((r) => r.ok && r.path === realTmp));
+
+  const d = (await browse({ path: dir })).body;
+  assert.equal(d.cwd, await fsp.realpath(dir));
+  assert.deepEqual(d.dirs, ['aa-sub', 'zz-sub']);
+  assert.deepEqual(d.files.map((f) => f.name), ['a.obj', 'b.fbx']);
+  assert.equal(d.files[1].size, 3);
+  assert.equal(d.parent, realTmp); // parent stays inside the root → "up" offered
+
+  const at = (await browse({ path: realTmp })).body;
+  assert.equal(at.parent, null); // browsing the root itself must not offer a climb-out
+});
+
+test('fs browse: outside roots / missing path / file-as-dir all rejected', skip, async () => {
+  assert.equal((await browse({ path: '/etc' })).status, 403);
+  const link = path.join(tmp, 'escape-link-' + Date.now());
+  await fsp.symlink('/etc', link);
+  const esc = await browse({ path: link }); // realpath containment kills symlink escapes
+  assert.equal(esc.status, 403);
+  await fsp.unlink(link);
+  const miss = await browse({ path: path.join(tmp, 'nope-' + Date.now()) });
+  assert.equal(miss.status, 400);
+  assert.match(miss.body.error.message, /does not exist/);
+  const f = path.join(tmp, 'browse-afile.txt');
+  await fsp.writeFile(f, 'z');
+  const bad = await browse({ path: f });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error.message, /not a directory/);
+});
+
+test('fs browse: 403 + capability off when allowLocalPath disabled', skip, async () => {
+  const app3 = await buildApp(loadConfig({
+    binary: FAKE, workspaceRoot: path.join(tmp, 'ws3'), maxConcurrentJobs: 1,
+    queueMax: 5, minFreeGb: 0, ttlDays: 7, jobTimeoutS: 30,
+    allowLocalPath: false, allowedRoots: [tmp], logLevel: 'silent',
+  }));
+  await app3.listen({ host: '127.0.0.1', port: 0 });
+  try {
+    const b3 = `http://127.0.0.1:${app3.server.address().port}`;
+    const caps = await (await fetch(b3 + '/api/v1/capabilities')).json();
+    assert.equal(caps.features.fsBrowse, false);
+    const r = await fetch(b3 + '/api/v1/fs/browse', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: tmp }),
+    });
+    assert.equal(r.status, 403);
+    assert.equal((await r.json()).error.code, 'LOCAL_PATH_DISABLED');
+  } finally {
+    await app3.close();
+  }
 });

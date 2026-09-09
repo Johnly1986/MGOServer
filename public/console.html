@@ -61,6 +61,20 @@
     border-radius:8px; padding:9px 11px; font-size:13.5px; transition:border-color .15s, box-shadow .15s; }
   input:focus, select:focus, textarea:focus { outline:none; border-color:var(--acc);
     box-shadow:0 0 0 3px rgba(77,163,255,.18); }
+  /* 主题化按钮：与输入框同尺寸/圆角/焦点环，primary 与提交按钮同渐变 */
+  .btn { padding:9px 14px; background:var(--bg2); color:var(--fg); border:1px solid var(--line2);
+         border-radius:8px; font-size:13.5px; cursor:pointer; white-space:nowrap;
+         transition:border-color .15s, box-shadow .15s, background .15s; }
+  .btn:hover { border-color:var(--acc); background:rgba(77,163,255,.10); color:var(--acc2); }
+  .btn:focus-visible { outline:none; border-color:var(--acc); box-shadow:0 0 0 3px rgba(77,163,255,.18); }
+  .btn:active { transform:translateY(1px); }
+  .btn.primary { background:linear-gradient(135deg,var(--acc) 0%,var(--acc-d) 100%); color:#fff;
+                 border-color:transparent; font-weight:600; box-shadow:0 3px 12px rgba(27,111,214,.35); }
+  .btn.primary:hover { filter:brightness(1.12); color:#fff; }
+  .drop .dirLink { display:inline-block; margin:0 2px; padding:1px 10px; border-radius:999px;
+    border:1px solid var(--line2); background:var(--bg2); color:var(--acc2); font-size:11.5px;
+    text-decoration:none; position:relative; z-index:2; cursor:pointer; }
+  .drop .dirLink:hover { border-color:var(--acc); background:rgba(77,163,255,.16); }
   select { appearance:none; -webkit-appearance:none; padding-right:30px;
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2393a0b4' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");
     background-repeat:no-repeat; background-position:right 11px center; cursor:pointer; }
@@ -115,6 +129,41 @@
   .drop .txt { font-size:13px; color:var(--dim); }
   .drop .meta { font-size:11px; color:var(--acc2); font-family:ui-monospace,Consolas,monospace; word-break:break-all; }
   .drop.drag .txt { color:var(--acc2); }
+  /* 文件选择组件：上传 ↔ 服务器路径 分段切换 */
+  .fpkSeg { display:inline-flex; border:1px solid var(--line2); border-radius:8px; overflow:hidden; margin-bottom:8px; }
+  .fpkSeg button { border:0; background:transparent; color:var(--dim); padding:5px 14px; font-size:12.5px; cursor:pointer; }
+  .fpkSeg button.on { background:var(--acc); color:#fff; }
+  .fpkSeg button:disabled { opacity:.45; cursor:not-allowed; }
+  .fpkSeg button:disabled:hover { color:var(--dim); }
+  .fsRow { display:flex; gap:8px; align-items:center; margin-top:4px; }
+  .fsRow input { flex:1; }
+  .fsCwd { font-size:12px; color:var(--dim); word-break:break-all; margin:6px 0; }
+  .fsList { max-height:50vh; overflow:auto; margin:0 0 10px; border:1px solid var(--line); border-radius:10px; }
+  .fsItem { display:flex; gap:8px; align-items:center; width:100%; text-align:left; padding:7px 12px;
+            background:transparent; border:0; border-bottom:1px solid var(--line); color:var(--fg);
+            cursor:pointer; font-size:13px; font-family:inherit; word-break:break-all; }
+  .fsItem:hover:not(:disabled) { background:var(--bg2); }
+  .fsItem:disabled { opacity:.45; cursor:default; }
+  .fsItem.sel { background:rgba(77,163,255,.12); box-shadow:inset 3px 0 0 var(--acc); }
+  .fsItem.used { opacity:.4; text-decoration:line-through; cursor:not-allowed; }
+  .fsItem.used .sz { text-decoration:none; }
+  .fsItem .sz { margin-left:auto; flex:none; color:var(--dim); font-size:11.5px; font-family:ui-monospace,Consolas,monospace; }
+  .fsFtr { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  /* 浏览弹框：面包屑 / 过滤行 / 状态行 / 焦点环（服务器路径选择器优化） */
+  .fsCrumbs { display:flex; flex-wrap:wrap; gap:1px; align-items:center; font-size:12px; margin:0 0 6px; }
+  .fsCrumbs button { border:0; background:transparent; color:var(--acc); cursor:pointer; padding:1px 5px;
+                     font-size:12px; border-radius:5px; font-family:inherit; }
+  .fsCrumbs button:hover { background:var(--bg2); }
+  .fsCrumbs button.cur { color:var(--fg); font-weight:600; }
+  .fsCrumbs .sep { color:var(--dim2); }
+  .fsBar { display:flex; gap:10px; align-items:center; margin:0 0 8px; }
+  .fsBar input[type=text] { flex:1; padding:6px 10px; }
+  .fsBar label { font-size:12px; color:var(--dim); display:inline-flex; gap:5px; align-items:center;
+                 white-space:nowrap; cursor:pointer; user-select:none; }
+  .fsEmpty { padding:16px 12px; color:var(--dim); font-size:12.5px; text-align:center; }
+  .fsItem:focus-visible, .fsCrumbs button:focus-visible, .fsBar input:focus-visible {
+    outline:2px solid var(--acc); outline-offset:-2px; }
+  #paramForm .pathOnly[hidden], #paramForm .uploadOnly[hidden] { display:none !important; }
 
   /* groups */
   details.grp { border:1px solid var(--line); border-radius:10px; margin-top:10px; overflow:hidden;
@@ -364,6 +413,30 @@
   </div>
 </div>
 
+<div class="modal" id="fsModal" hidden>
+  <div class="mask" id="fsMask"></div>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="fsTitle" tabindex="-1" id="fsDialog"
+       style="width:min(680px,100%)">
+    <div class="logHead">
+      <h4 id="fsTitle">🖥 选择服务器文件</h4>
+      <span class="sp"><button id="fsCloseBtn" title="关闭（Esc）">✕ 关闭</button></span>
+    </div>
+    <div class="fsCwd" id="fsCwd">加载中…</div>
+    <div class="fsCrumbs" id="fsCrumbs" hidden></div>
+    <div class="fsBar">
+      <input type="text" id="fsFilter" placeholder="⌕ 过滤当前目录（快捷键 /）" autocomplete="off" spellcheck="false">
+      <label id="fsOnlyWrap"><input type="checkbox" id="fsOnlyOk" checked>只看可选</label>
+    </div>
+    <div class="fsList" id="fsList" role="listbox" tabindex="0"></div>
+    <div class="fsFtr">
+      <button id="fsUseDir" class="btn">📂 选择当前文件夹</button>
+      <button id="fsConfirm" class="btn primary" hidden>＋ 加入选中 (<span id="fsSelN">0</span>)</button>
+      <button id="fsClear" class="btn" hidden>清空已选</button>
+      <span class="hint" id="fsHint" style="margin-left:auto"></span>
+    </div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script type="module">
@@ -376,7 +449,7 @@ const el = (tag, attrs = {}, ...kids) => {
     else if (v === true) n.setAttribute(k, '');
     else if (v !== false && v !== undefined && v !== null) n.setAttribute(k, v);
   }
-  for (const k of kids) n.append(k.nodeType ? k : document.createTextNode(k));
+  for (const k of kids) { if (k == null || k === false) continue; n.append(k.nodeType ? k : document.createTextNode(k)); }
   return n;
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -464,7 +537,11 @@ const OPT_CN = {
 };
 const gProj = () => el2('投影', [
   F('proj.crs', 'text', '输入数据坐标系', { span: true, ph: 'EPSG:4547 / WKT / +proj=…', hint: '声明输入数据所用的坐标系（EPSG 代码 / WKT / proj4 字符串）' }),
-  F('@prj', 'file', '或上传 .prj / .wkt 文件', { accept: '.prj,.wkt,.proj', span: true, hint: '提供投影定义文件，上传后忽略上方文本框' }),
+  F('@prj', 'file', '或上传 .prj / .wkt 文件', { accept: '.prj,.wkt,.proj', span: true, uploadOnly: true, hint: '提供投影定义文件（「⬆ 上传」模式），上传后忽略上方文本框' }),
+  F('proj.prjPath', 'pathtext', '或选择服务器投影文件（.prj / .wkt / .proj）', {
+    span: true, pext: '.prj,.wkt,.proj', ph: '/data/prj/cgcs2000.prj',
+    hint: '「🖥 服务器路径」模式专用：浏览选取服务器本地投影定义文件（限 MGO_ALLOWED_ROOTS），选后忽略上方文本框；JSON 手改模式可直接写 proj.prjPath',
+  }),
 ]);
 const gOrigin = (label = '坐标原点') => el2(label, [
   F('origin', 'vec3', 'Origin', { subs: ['E/X (m)', 'N/Y (m)', 'H (m)'], hint: '输出瓦片网格的原点坐标（局部坐标 → 地心的平移量）' }),
@@ -479,7 +556,7 @@ const gGeoref = ({ meshOffset = false } = {}) => {
              ['rx', null, '旋转 (角秒)'], ['ry', null, '旋转 (角秒)'], ['rz', null, '旋转 (角秒)'],
              ['s', null, '尺度 (ppm)']] }),
     F('georef.controlPoints', 'area', '控制点 CSV 文本（源 → 目标）', { span: true, hint: '每行一条：源X,源Y,源Z,目标X,目标Y,目标Z（逗号或空格分隔），至少 3 条' }),
-    F('@cps', 'file', '或上传控制点 .csv', { accept: '.csv,.txt', span: true, hint: '内容与上方文本框相同，来自文件时优先生效' }),
+    F('@cps', 'file', '或上传控制点 .csv', { accept: '.csv,.txt', span: true, uploadOnly: true, hint: '内容与上方文本框相同，来自文件时优先生效' }),
   ]);
   if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移', { subs: [['dE', null, '米'], ['dN', null, '米'], ['dH', null, '米']], hint: '配准完成后的整体平移量（米），用于微调成果位置' }));
   return g;
@@ -519,7 +596,7 @@ const UI = {
       F('coordMode', 'select', '输出坐标系', { opts: ['', 'original', 'left'], hint: 'original=保持原始坐标，left=转左手系；默认自动转地心坐标' }),
       F('reorder', 'bool', '顶点重排优化（减小体积）', { hint: '按空间邻接重排顶点顺序，压缩率更高、加载更快' }),
       F('rebuild', 'bool', '加载时重建场景', { hint: '加载输入时强制重建场景图，用于排查异常结构' }),
-      F('@cfg', 'file', '或上传逐构件简化配置 CSV（按名称匹配）', { accept: '.csv,.txt', span: true, hint: '每行：构件名,误差 —— 为不同构件单独指定简化力度' }),
+      F('@cfg', 'file', '或上传逐构件简化配置 CSV（按名称匹配）', { accept: '.csv,.txt', span: true, uploadOnly: true, hint: '每行：构件名,误差 —— 为不同构件单独指定简化力度' }),
     ]},
     gProj(), gGeoref({ meshOffset: true }), gSimplify({ local: true }),
   ]),
@@ -551,110 +628,409 @@ const BASIC = {
 
 /* ================ input area ================ */
 let caps = null;
+/* ============ FilePicker 组件 ================
+ * 单一输入控件，内含分段切换（服务器开启本地路径时）：
+ *   ⬆ 上传        —— 拖/选 模型文件、模型+贴图 ZIP、整个文件夹（树通道）
+ *   🖥 服务器路径  —— 手填 + 只读目录浏览点选（原地处理，不上传不搬动）
+ * 切换段恒显示；服务器未开启本地路径（MGO_ALLOW_LOCAL_PATH）时路径段置灰 +
+ * tooltip 说明开启方式。OSGB 与 tiles/mesh 共用本组件。
+ */
 function renderInputArea(type) {
   const area = $('#inputArea'); area.innerHTML = '';
-  if (type === 'osgb') {
-    // 文件夹选择对话框（webkitdirectory）：整目录上传，服务端重建树结构
-    const drop = el('div', { class: 'drop' },
-      el('input', { type: 'file', id: 'osgbDir', webkitdirectory: true, directory: true }),
-      el('div', { class: 'dropInner' },
-        el('span', { class: 'ic' }, '📂'),
-        el('span', { class: 'txt' }, '点击选择 OSGB 文件夹'),
-        el('span', { class: 'meta', id: 'osgbMeta' }, '')));
-    const fi = drop.querySelector('input');
-    fi.onchange = () => updateOsgbDir(fi);
-    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
-    drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
-    drop.addEventListener('drop', (e) => {
-      e.preventDefault(); drop.classList.remove('drag');
-      const items = [...(e.dataTransfer?.items || [])];
-      // 拖入文件夹：webkitGetAsEntry 展开需要异步 API，这里退化为提示
-      if (items.length) {
-        const anyDir = items.some((it) => it.webkitGetAsEntry?.()?.isDirectory);
-        fi.files = e.dataTransfer.files;
-        fi.dispatchEvent(new Event('change'));
-        if (anyDir) {
-          const meta = $('#osgbMeta');
-          meta.textContent = '已选择 · 拖入文件夹支持有限，建议改用点击选择';
-        }
-      }
-    });
-    area.append(label('OSGB 数据（选择文件夹上传）'), drop);
-    area.append(el('div', { class: 'hint' }, '推荐选顶层 Data 目录；超大数据集可用下方服务器本地路径'));
-    // zip 上传（服务端解压）
-    const zdrop = el('div', { class: 'drop', style: 'margin-top:8px' },
-      el('input', { type: 'file', id: 'osgbZip', accept: '.zip' }),
-      el('div', { class: 'dropInner' },
-        el('span', { class: 'ic' }, '🗜'),
-        el('span', { class: 'txt' }, '或上传 ZIP 压缩包'),
-        el('span', { class: 'meta', id: 'osgbZipMeta' }, '')));
-    const zf = zdrop.querySelector('input');
-    zf.onchange = () => {
-      const m = $('#osgbZipMeta');
-      const f = zf.files?.[0];
-      if (f) m.textContent = `${f.name} · ${f.size >= 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB'}`;
-      else m.textContent = '';
-    };
-    area.append(zdrop);
-    if (caps?.features?.localPathInput) {
-      area.append(label('或服务器本地路径'));
-      area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '/data/osgb_root/Data 或 D:\\proj\\Data' }));
-    } else {
-      area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '', hidden: true }));
-    }
-    return;
+  treePick = null;
+  picker = createFilePicker(type);
+  area.append(label(type === 'osgb' ? 'OSGB 数据（文件夹 / ZIP）' : '输入'), picker);
+  // tiles 走「自动全选」：文件夹/ZIP 内所有模型统一参数逐个转换后合并，无需手填模型路径；
+  // 仅 mesh（单模型语义、多候选会歧义）保留可选的模型路径消歧框。
+  if (type === 'mesh') {
+    area.append(label('模型路径（ZIP / 文件夹内；可留空自动识别）'));
+    area.append(el('input', { type: 'text', id: 'modelPaths', placeholder: '如 site/model.fbx' }));
   }
-  // tiles 支持多文件：统一转换参数逐个转换，服务端再用 3d-tiles-tools 合并为
-  // 一个 tileset.json；其余类型仍是单文件
+}
+function createFilePicker(type) {
+  const allowPath = Boolean(caps?.features?.localPathInput);
+  const osgb = type === 'osgb';
+  const treeMode = osgb || type === 'tiles' || type === 'mesh';
   const multi = type === 'tiles';
+  treePick = null;
+  const root = el('div', { class: 'fpk' });
+
+  /* ---- 上传模式 ---- */
+  const accept = osgb ? '.zip' : fileAccept(type) + ((type === 'tiles' || type === 'mesh') ? ',.zip' : '');
   const drop = el('div', { class: 'drop' },
-    el('input', { type: 'file', id: 'file', accept: fileAccept(type), multiple: multi }),
+    el('input', { type: 'file', id: 'file', accept, multiple: multi }),
     el('div', { class: 'dropInner' },
-      el('span', { class: 'ic' }, '📁'),
-      el('span', { class: 'txt' }, multi ? '点击选择或拖拽多个模型到此处（统一参数转换后自动合并）' : '点击选择或拖拽文件到此处'),
+      el('span', { class: 'ic' }, '🗂'),
+      el('span', { class: 'txt' }, osgb ? '点击/拖入 OSGB 文件夹，或 ZIP 压缩包'
+        : multi ? '拖入 模型文件（可多选）· 模型+贴图 ZIP · 或整个文件夹'
+        : type === 'mesh' ? '拖入 模型文件 · 模型+贴图 ZIP · 或整个文件夹'
+        : '点击选择或拖拽文件到此处'),
+      treeMode ? el('span', { class: 'txt', style: 'font-size:11.5px' },
+        el('span', {}, osgb ? '点击' : '点击选择文件；带贴图请拖文件夹/ZIP（也可',
+          el('a', { href: '#', id: 'dirPickLink', class: 'dirLink' }, '点这里选文件夹'),
+          osgb ? '，或把整个 OSGB 目录 / ZIP 拖进来（超大目录用「服务器路径」免上传）' : '）；只传裸模型文件会丢贴图')) : null,
       el('span', { class: 'meta', id: 'dropMeta' }, '')));
-  const fi = drop.querySelector('input');
-  fi.onchange = () => updateDrop(fi);
+  const fi = drop.querySelector('#file');
+  fi.onchange = () => {
+    treePick = null; updateDrop();
+    if (osgb && fi.files?.length && !/\.zip$/i.test(fi.files[0].name)) {
+      $('#dropMeta').textContent = '⚠ OSGB 只支持文件夹或 .zip 压缩包，请重选';
+    }
+  };
+  const upPane = el('div', {}, drop);
+  if (treeMode) {
+    const dp = el('input', { type: 'file', id: 'dirPick', hidden: '' });
+    dp.webkitdirectory = true; dp.multiple = true;
+    dp.onchange = () => {
+      treePick = [...(dp.files ?? [])].map((f) => ({ file: f, rel: f.webkitRelativePath || f.name }));
+      if (treePick.length) fi.value = '';
+      updateDrop();
+    };
+    upPane.append(dp);
+    const dl = drop.querySelector('#dirPickLink');
+    if (dl) dl.onclick = (e) => { e.preventDefault(); e.stopPropagation(); dp.click(); };
+  }
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
   drop.addEventListener('drop', (e) => {
     e.preventDefault(); drop.classList.remove('drag');
+    const entries = [...(e.dataTransfer?.items ?? [])]
+      .map((it) => (it.kind === 'file' ? it.webkitGetAsEntry?.() : null)).filter(Boolean);
+    if (treeMode && entries.some((en) => en.isDirectory)) {
+      // 文件夹进入树模式：递归收集（含子目录贴图），rel 保留树结构
+      (async () => {
+        const picked = [];
+        for (const en of entries) await walkEntry(en, '', picked);
+        treePick = picked; fi.value = ''; updateDrop();
+      })();
+      return;
+    }
     const fs = multi ? [...(e.dataTransfer?.files ?? [])] : [...(e.dataTransfer?.files ?? [])].slice(0, 1);
     if (fs.length) {
-      try { const dt = new DataTransfer(); fs.forEach((f) => dt.items.add(f)); fi.files = dt.files; fi.dispatchEvent(new Event('change')); } catch { /* fallback */ }
+      treePick = null;
+      try { const dt = new DataTransfer(); fs.forEach((f) => dt.items.add(f)); fi.files = dt.files; } catch { /* fallback */ }
+      updateDrop();
     }
   });
-  area.append(label(multi ? '输入文件（可多选）' : '输入文件'), drop);
-  if (caps?.features?.localPathInput) {
-    area.append(label(multi ? '或服务器本地路径（免上传，多个用英文逗号分隔）' : '或服务器本地路径（免上传）'));
-    area.append(el('input', { type: 'text', id: 'inputPath', placeholder: '/data/models/x.fbx' }));
+
+  /* ---- 服务器路径模式 ---- */
+  const pathInput = el('input', { type: 'text', id: 'inputPath',
+    placeholder: osgb ? '/data/osgb_root/Data（目录）'
+      : type === 'tiles' ? '/data/models/ 或 /data/a.fbx, /data/b.obj（逗号分隔）'
+      : '/data/models/x.fbx' });
+  const browseBtn = el('button', { type: 'button', class: 'btn', id: 'fsBrowseBtn' }, '📂 浏览…');
+  browseBtn.onclick = () => openFsBrowser(type, pathInput);
+  const pathPane = el('div', { hidden: '' },
+    el('div', { class: 'fsRow' }, pathInput, allowPath ? browseBtn : null),
+    el('div', { class: 'hint' }, osgb ? 'OSGB 整目录原地处理（不上传、不搬动文件）'
+      : type === 'tiles' ? '可直接填模型文件夹（原地处理，自动识别并合并文件夹内全部模型）；或逗号分隔多个模型文件'
+      : type === 'mesh' ? '可直接填「模型+贴图」文件夹（原地处理；含多个模型时用下方「模型路径」指定其一）'
+      : '服务器本地路径，免上传、原地处理'));
+
+  /* ---- 模式切换 ---- */
+  let mode = 'upload';
+  let seg = null;
+  const setMode = (m) => {
+    mode = m;
+    upPane.hidden = m !== 'upload';
+    pathPane.hidden = m !== 'path';
+    if (seg) for (const b of seg.querySelectorAll('button')) b.classList.toggle('on', b.dataset.m === m);
+    document.dispatchEvent(new CustomEvent('fpk-mode', { detail: { mode: m } }));
+  };
+  // 切换段恒在：服务器未启用本地路径时，路径段置灰并以 tooltip 说明开启方式
+  seg = el('div', { class: 'fpkSeg', id: 'fpkSeg' },
+    el('button', { type: 'button', class: 'on', 'data-m': 'upload', onclick: () => setMode('upload') }, '⬆ 上传'),
+    allowPath
+      ? el('button', { type: 'button', 'data-m': 'path', onclick: () => setMode('path') }, '🖥 服务器路径')
+      : el('button', { type: 'button', 'data-m': 'path', disabled: '',
+        title: '服务器未启用本地路径模式——设置 MGO_ALLOW_LOCAL_PATH=1 与 MGO_ALLOWED_ROOTS 后重启，即可填写/浏览服务器文件（原地处理，免上传）' },
+      '🖥 服务器路径'));
+  root.append(seg);
+  root.append(upPane, pathPane);
+  root.getMode = () => mode;
+  return root;
+}
+
+/* FilePicker 组件状态：picker=当前实例；treePick=「文件树」选择态
+ * （null=普通文件；数组 [{file, rel}] 时 rel 保留目录结构，走 relPaths 通道） */
+let picker = null;
+let treePick = null;
+async function walkEntry(entry, prefix, out) {
+  if (!entry) return;
+  if (entry.isFile) {
+    const f = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ file: f, rel: prefix + entry.name });
+  } else if (entry.isDirectory) {
+    const rd = entry.createReader();
+    let all = []; let batch;
+    do { batch = await new Promise((res) => rd.readEntries(res, () => res([]))); all = all.concat(batch); } while (batch.length);
+    for (const ch of all) await walkEntry(ch, prefix + entry.name + '/', out);
   }
 }
-function updateDrop(fi) {
+function updateDrop() {
   const meta = $('#dropMeta');
   if (!meta) return;
-  const fs = fi.files ? [...fi.files] : [];
-  if (!fs.length) { meta.textContent = ''; return; }
   const size = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
-  if (fs.length === 1) { meta.textContent = `${fs[0].name} · ${size(fs[0].size)}`; return; }
+  if (treePick?.length) {
+    const total = treePick.reduce((s, t) => s + t.file.size, 0);
+    const top = String(treePick[0].rel).split('/')[0];
+    meta.textContent = `🗂 ${top}/ · ${treePick.length} 个文件 · ${size(total)}（树结构保留，贴图可解析）`;
+    return;
+  }
+  const fi = $('#file');
+  const fs = fi && fi.files ? [...fi.files] : [];
+  if (!fs.length) { meta.textContent = ''; return; }
+  if (fs.length === 1) {
+    meta.textContent = /\.zip$/i.test(fs[0].name)
+      ? `${fs[0].name} · ${size(fs[0].size)}（ZIP 文件树）`
+      : `${fs[0].name} · ${size(fs[0].size)}`;
+    return;
+  }
   const total = fs.reduce((s, f) => s + f.size, 0);
   const shown = fs.slice(0, 3).map((f) => f.name).join('、');
   meta.textContent = `${fs.length} 个文件 · ${size(total)}（${shown}${fs.length > 3 ? '…' : ''}）`;
 }
-function updateOsgbDir(fi) {
-  const meta = $('#osgbMeta');
-  if (!meta) return;
-  const files = fi.files ? [...fi.files] : [];
-  if (!files.length) { meta.textContent = ''; return; }
-  const rel = files[0].webkitRelativePath || files[0].name;
-  const top = rel.split('/')[0];
-  const kb = files.reduce((s, f) => s + f.size, 0);
-  const size = kb >= 1048576 ? (kb / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(kb / 1024)) + ' KB';
-  meta.textContent = `${top} · ${files.length} 个文件 · ${size}`;
-}
 const fileAccept = (t) => ({ tiles: '.fbx,.obj,.gltf,.glb,.dae,.3ds,.ply,.stl',
   mesh: '.fbx,.obj,.gltf,.glb,.dae,.3ds,.ply,.stl', terrain: '.tif,.tiff',
   image: '.tif,.tiff', geojson: '.geojson,.json' })[t] ?? '';
+
+/* ---- pathOnly 字段（如 proj.prjPath）仅在「🖥 服务器路径」模式 + 服务器开启
+ * 浏览能力时可见可收集；离开该模式即隐藏并清空，防止残留值打到上传/JSON 通道。
+ * 投影文件优先：prjPath 或上传 @prj 有值时禁用 CRS 文本框（镜像服务端
+ * prjFile > prjPath > crs 的取舍，同时规避 schema 的 crs|prjPath 二选一 422）。 */
+function applyPathOnly() {
+  const on = picker?.getMode?.() === 'path' && Boolean(caps?.features?.fsBrowse) && !jsonManual;
+  for (const n of $('#paramForm').querySelectorAll('.pathOnly')) {
+    n.hidden = !on;
+    if (!on) {
+      const i = n.querySelector('input[type=text]');
+      if (i && i.value) i.value = '';
+    }
+  }
+  for (const n of $('#paramForm').querySelectorAll('.uploadOnly')) {
+    n.hidden = on;
+    if (on) {                                  // 路径/JSON 模式不收附件：直接清掉选择
+      const i = n.querySelector('input[type=file]');
+      if (i && i.value) i.value = '';
+    }
+  }
+  syncPrjPriority();
+  syncJson();
+}
+function syncPrjPriority() {
+  const p = $('#paramForm').querySelector('[data-k="proj.prjPath"]');
+  const c = $('#paramForm').querySelector('[data-k="proj.crs"]');
+  if (!p || !c) return;
+  const has = p.value.trim() !== '';
+  c.disabled = has;
+  c.style.opacity = has ? '.45' : '';
+  c.title = has ? '已选择投影定义文件，本文本框被忽略（文件优先）' : '';
+}
+document.addEventListener('fpk-mode', applyPathOnly);
+
+/* ---- 服务器目录浏览选径（只读；受 MGO_ALLOWED_ROOTS + 白名单 IP 约束） ----
+ * 通用选择弹框（输入文件 / 投影 side-car / 整目录共用）。
+ * sel 存【绝对路径】：旧版存裸文件名、确认时按当时的 cwd 拼接——进入子目录
+ * 再「加入选中」会拼出错误路径，且同名文件跨目录误高亮。现在选择跨目录
+ * 保留、路径即所见即所得。 */
+const fsState = { cwd: null, last: null, req: '', sel: [], multi: false, allowDir: false,
+  exts: [], filter: '', onlyOk: true, input: null, loading: false, err: null, errReq: null };
+const fmtKB = (n) => n == null ? '' : n >= 1073741824 ? (n / 1073741824).toFixed(2) + ' GB'
+  : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+const fsExtOf = (name) => { const m = /\.([A-Za-z0-9]+)$/.exec(name); return m ? '.' + m[1].toLowerCase() : ''; };
+/**
+ * 目标输入框中【已选/已加入】的绝对路径集合。多选模式下这些条目在列表中
+ * 置灰禁选（划掉 + 「已选」标签），防止重复选中；「✕ 移除所选」或手改
+ * 路径框后即时恢复。需每次渲染现算：路径框随时可能被外部清空/编辑。
+ */
+function fsUsed() {
+  const set = new Set();
+  for (const s of String(fsState.input?.value || '').split(/[,\n]/)) { const t = s.trim(); if (t) set.add(t); }
+  return set;
+}
+async function fsBrowse(p) {
+  const r = await fetch('/api/v1/fs/browse', { method: 'POST',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: p }) });
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+/**
+ * 打开浏览弹框。type 推导默认策略；opts 可整体覆盖：
+ * {exts, allowDir, multi, title, start}。投影行传
+ * {exts:['.prj','.wkt','.proj'], allowDir:false, multi:false}。
+ */
+function openFsBrowser(type, inputEl, opts = {}) {
+  fsState.input = inputEl; fsState.sel = []; fsState.last = null;
+  fsState.multi = opts.multi ?? (type === 'tiles');           // tiles 可逗号多选多个模型文件
+  fsState.allowDir = opts.allowDir ?? (type === 'osgb' || type === 'tiles' || type === 'mesh'); // 可选整目录（树模式）
+  fsState.exts = opts.exts ?? ((type === 'osgb' || type == null) ? []
+    : fileAccept(type).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+        .concat(type === 'tiles' || type === 'mesh' ? ['.zip'] : []));
+  fsState.filter = ''; fsState.onlyOk = true; fsState.err = null;
+  $('#fsFilter').value = '';
+  $('#fsOnlyOk').checked = true;
+  $('#fsOnlyWrap').hidden = !fsState.exts.length;
+  $('#fsTitle').textContent = opts.title || '🖥 选择服务器文件';
+  $('#fsModal').hidden = false;
+  $('#fsDialog').focus();
+  // 初始定位：目标输入框已有路径时先进它的所在目录（失败静默回落根列表）
+  const cur = String(inputEl?.value || '').split(',').map((s) => s.trim()).filter(Boolean).pop() || '';
+  const dir0 = cur.replace(/[\\/]+[^\\/]*$/, '');
+  if (opts.start || dir0) fsLoad(opts.start || dir0, { quiet: true });
+  else fsLoad('');
+}
+function fsClose() { $('#fsModal').hidden = true; }
+function fsJoin(base, name) {
+  const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/';
+  return base.replace(/[\\/]+$/, '') + sep + name;
+}
+async function fsLoad(p, { quiet = false } = {}) {
+  fsState.req = p; fsState.loading = true; fsState.err = null;
+  fsRender();
+  try {
+    const d = await fsBrowse(p);
+    fsState.loading = false;
+    fsState.last = d; fsState.cwd = d.cwd;
+    fsRender();
+  } catch (e) {
+    fsState.loading = false;
+    if (quiet) { fsLoad('', {}); return; }        // 自动定位失败不算错：回落根列表
+    fsState.err = String(e?.message ?? e); fsState.errReq = p;
+    fsState.last = null; fsState.cwd = null;
+    fsRender();
+  }
+}
+function fsRender() {
+  const list = $('#fsList'); const crumbs = $('#fsCrumbs');
+  list.innerHTML = ''; crumbs.innerHTML = ''; crumbs.hidden = true;
+  const st = $('#fsCwd');
+
+  if (fsState.loading) {
+    st.textContent = '⏳ 加载中…';
+    list.append(el('div', { class: 'fsEmpty' }, '加载中…'));
+    $('#fsUseDir').hidden = true; $('#fsConfirm').hidden = true; $('#fsClear').hidden = true;
+    return;
+  }
+  if (!fsState.last) {
+    st.textContent = fsState.err ? '✗ ' + fsState.err : '允许的根目录（MGO_ALLOWED_ROOTS）';
+    if (fsState.err) {
+      list.append(
+        el('button', { class: 'fsItem', onclick: () => fsLoad(fsState.errReq ?? '') }, '↻ 重试本目录'),
+        el('button', { class: 'fsItem', onclick: () => fsLoad('') }, '🏠 回到根目录'));
+    }
+    $('#fsUseDir').hidden = true; $('#fsConfirm').hidden = true; $('#fsClear').hidden = true;
+    $('#fsHint').textContent = '';
+    return;
+  }
+  const d = fsState.last;
+  const inDir = Boolean(d.cwd);
+  st.textContent = inDir ? d.cwd : '允许的根目录（MGO_ALLOWED_ROOTS）';
+  st.title = inDir ? d.cwd : '';
+  $('#fsUseDir').hidden = !(fsState.allowDir && inDir);
+  // 多选下当前目录已整体加入过 → 按钮置灰，避免重复选择
+  const dirUsed = inDir && fsState.multi && fsState.input?.value
+    && String(fsState.input.value).split(/[,\n]/).map((s) => s.trim()).includes(d.cwd);
+  $('#fsUseDir').disabled = Boolean(dirUsed);
+  $('#fsUseDir').title = dirUsed ? '当前目录已在已选路径中，如需重选请先移除' : '';
+
+  // ---- 面包屑：最长匹配根 + 可点分段（当前段置灰样式） ----
+  if (inDir && (d.roots ?? []).length) {
+    let root = null;
+    for (const r of d.roots) {
+      if (!r.ok) continue;
+      if (d.cwd === r.path || d.cwd.startsWith(r.path + '/') || d.cwd.startsWith(r.path + '\\')) {
+        if (!root || r.path.length > root.path.length) root = r;
+      }
+    }
+    if (root) {
+      crumbs.hidden = false;
+      crumbs.append(el('button', { onclick: () => fsLoad(''), title: '根目录列表' }, '🏠 ' + root.name));
+      let acc = root.path;
+      for (const sg of d.cwd.slice(root.path.length).split(/[\\/]+/).filter(Boolean)) {
+        acc = fsJoin(acc, sg);
+        crumbs.append(el('span', { class: 'sep' }, '/'));
+        const p = acc;
+        crumbs.append(el('button', { onclick: () => fsLoad(p), title: p }, sg));
+      }
+      const bs = crumbs.querySelectorAll('button');
+      bs[bs.length - 1]?.classList.add('cur');
+    }
+  }
+
+  if (!inDir) {
+    for (const r of d.roots ?? []) {
+      list.append(el('button', { class: 'fsItem', disabled: r.ok ? null : '', title: r.path,
+        onclick: () => { if (r.ok) fsLoad(r.path); } },
+        (r.ok ? '📁 ' : '🚫 ') + r.name + (r.ok ? '' : '（不存在）')));
+    }
+  } else {
+    const q = fsState.filter.trim().toLowerCase();
+    if (d.parent) list.append(el('button', { class: 'fsItem', onclick: () => fsLoad(d.parent) },
+      '⬆ ..', el('span', { class: 'sz' }, '上级目录')));
+    for (const name of (d.dirs ?? []).filter((n) => !q || n.toLowerCase().includes(q))) {
+      list.append(el('button', { class: 'fsItem', title: fsJoin(d.cwd, name),
+        onclick: () => fsLoad(fsJoin(d.cwd, name)) }, '📁 ' + name));
+    }
+    let files = d.files ?? [];
+    if (q) files = files.filter((f) => f.name.toLowerCase().includes(q));
+    const okExt = (f) => fsState.exts.length > 0 && fsState.exts.includes(fsExtOf(f.name));
+    let hiddenN = 0;
+    if (fsState.onlyOk && fsState.exts.length) {
+      const before = files.length;
+      files = files.filter(okExt);
+      hiddenN = before - files.length;
+    }
+    const used = fsState.multi ? fsUsed() : null;   // 已加入目标路径框的条目 → 禁选
+    for (const f of files) {
+      const ok = okExt(f);
+      const full = fsJoin(d.cwd, f.name);
+      const u = used?.has(full);
+      list.append(el('button', { class: 'fsItem' + (u ? ' used' : fsState.sel.includes(full) ? ' sel' : ''),
+        disabled: ok && !u ? null : '', title: u ? full + '（已选，如需重选请先在「已选路径」中移除）' : full,
+        onclick: () => fsSel(full) },
+      '📄 ' + f.name, el('span', { class: 'sz' }, u ? '已选' : fmtKB(f.size))));
+    }
+    if (!list.children.length) {
+      list.append(el('div', { class: 'fsEmpty' },
+        q ? `没有匹配「${fsState.filter.trim()}」的条目` : '空目录'));
+    } else if (hiddenN) {
+      list.append(el('div', { class: 'fsEmpty', style: 'padding:8px 12px;text-align:left' },
+        `已隐藏 ${hiddenN} 个不可选项（取消「只看可选」查看）`));
+    }
+    if (d.truncated) {
+      list.append(el('div', { class: 'fsEmpty', style: 'padding:8px 12px;text-align:left' },
+        '条目过多，已截断显示（可用上方过滤框缩小范围）'));
+    }
+  }
+  $('#fsSelN').textContent = String(fsState.sel.length);
+  $('#fsConfirm').hidden = !(fsState.multi && fsState.sel.length);
+  $('#fsClear').hidden = !fsState.sel.length;
+  const usedN = fsState.multi ? fsUsed().size : 0;
+  $('#fsHint').textContent = fsState.multi
+    ? (fsState.sel.length ? `已选 ${fsState.sel.length} 个（跨目录保留）` : '可点选多个文件，再「加入选中」')
+      + (usedN ? ` · 路径框已含 ${usedN} 项（列表中置灰不可重复选）` : '')
+    : (fsState.exts.length ? '点击文件即选中' : '');
+}
+function fsSel(full) {
+  if (fsState.multi) {
+    if (fsUsed().has(full)) return;                       // 已加入 → 不可再选（防御）
+    const i2 = fsState.sel.indexOf(full);
+    if (i2 >= 0) fsState.sel.splice(i2, 1); else fsState.sel.push(full);
+    fsRender();
+  } else {
+    fsWrite([full], true);                                 // 单选：即选即填并关闭
+  }
+}
+function fsWrite(items, replace, close = true) {
+  const input = fsState.input; if (!input) return;
+  const cur = replace ? [] : String(input.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+  for (const p of items) if (p && !cur.includes(p)) cur.push(p);
+  input.value = cur.join(', ');
+  input.dispatchEvent(new Event('input', { bubbles: true }));  // JSON 预览 / 投影优先联动即时刷新
+  if (close) fsClose();
+}
+
 
 /* ================ form render / collect ================ */
 function label(s) { return el('label', {}, s); }
@@ -705,7 +1081,7 @@ function tipFor(f) {
     if (r) lines.push(r);
     lines.push('留空 = 不传该参数（用 CLI 默认值）');
   } else if (f.t === 'select') lines.push('选「默认（不指定）」= 不传该参数');
-  else if (f.t === 'text' || f.t === 'area') lines.push('留空 = 不传该参数');
+  else if (f.t === 'text' || f.t === 'area' || f.t === 'pathtext') lines.push('留空 = 不传该参数');
   return lines.join('\n');
 }
 const infoIcon = (tip) => el('i', { class: 'info', tabindex: '0', 'data-tip': tip || '暂无说明' }, 'i');
@@ -737,9 +1113,25 @@ function fieldNode(f) {
     const s = el('textarea', { id, 'data-k': f.k, placeholder: f.ph || 'sx,sy,sz,tx,ty,tz\n12345.6,2345678.9,42.0,445000,3260000,0' });
     return el('div', { class: 'fcell fspan' }, label(f.label), iw(s, tipFor(f), true));
   }
+  if (f.t === 'pathtext') {
+    // 服务器路径模式专属（.pathOnly 行）：文本框 + 浏览按钮，回填走通用弹框
+    const s = el('input', { type: 'text', id, 'data-k': f.k, placeholder: f.ph || '',
+      autocomplete: 'off', spellcheck: 'false' });
+    const btn = el('button', { type: 'button', class: 'btn', title: `浏览服务器文件（${f.pext}）` }, '📂 浏览…');
+    btn.onclick = () => openFsBrowser(null, s, {
+      exts: String(f.pext || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+      allowDir: false, multi: false, title: '🖥 ' + f.label,
+    });
+    s.addEventListener('input', () => syncPrjPriority());
+    const row = el('div', { class: cls + ' pathOnly' }, label(f.label),
+      iw(el('div', { class: 'fsRow' }, s, btn), tipFor(f)));
+    row.hidden = true;                       // 初始上传模式；applyPathOnly() 按模式放行
+    return row;
+  }
   if (f.t === 'file') {
     const s = el('input', { type: 'file', id, 'data-k': f.k, accept: f.accept || '' });
-    return el('div', { class: cls }, label(f.label), iw(s, [f.hint, '不选择 = 不上传'].filter(Boolean).join('\n')));
+    return el('div', { class: cls + (f.uploadOnly ? ' uploadOnly' : '') }, label(f.label),
+      iw(s, [f.hint, '不选择 = 不上传'].filter(Boolean).join('\n')));
   }
   if (f.t === 'vec3' || f.t === 'seven') {
     const subs = (f.subs || (f.t === 'vec3' ? ['X', 'Y', 'Z'] : ['mx', 'my', 'mz', 'rx', 'ry', 'rz', 's']))
@@ -799,6 +1191,7 @@ function renderForm(type) {
       el('summary', {}, chev, g.name, cnt), body));
   });
   for (const inp of form.querySelectorAll('input,select,textarea')) inp.addEventListener('input', syncJson);
+  applyPathOnly();
   syncJson();
 }
 
@@ -816,6 +1209,8 @@ function collect() {
   for (const node of $('#paramForm').querySelectorAll('[data-k]')) {
     const k = node.dataset.k;
     if (k.startsWith('@')) { if (node.files?.[0]) files[k.slice(1)] = node.files[0]; continue; }
+    if (node.disabled) continue;            // 被投影文件压制的 crs 不收集
+    if (k === 'proj.prjPath' && picker?.getMode?.() !== 'path') continue; // 仅路径模式携带
     if (node.type === 'checkbox') {
       if (k === 'normals') { if (!node.checked) params.normals = false; continue; }
       // mesh -L defaults ON in the CLI, so an explicit false opts out;
@@ -872,6 +1267,7 @@ $('#jsonGrp').querySelector('summary').addEventListener('click', () => {
   $('#jsonBox').readOnly = !jsonManual;
   $('#jsonModeLabel').textContent = jsonManual ? '编辑中 · 以此为准提交' : '预览';
   if (!jsonManual) { try { applyJsonToForm(JSON.parse($('#jsonBox').value)); } catch { /* keep form */ } }
+  applyPathOnly();   // JSON 手改模式下 pathOnly 行隐藏（值由 JSON 框接管）
 });
 function applyJsonToForm(p) { // best-effort form fill
   for (const node of $('#paramForm').querySelectorAll('[data-k]')) {
@@ -1096,7 +1492,7 @@ function toggleModalChrome(on) {
     b.style.paddingRight = '';
   }
   // 背景整体 inert：不进 Tab 序、读屏也不播（不支持该属性的浏览器忽略即可，焦点圈仍由 keydown 兜住）
-  for (const n of b.children) if (n.tagName !== 'SCRIPT' && n !== logModal && n.id !== 'toasts') n.inert = on;
+  for (const n of b.children) if (n.tagName !== 'SCRIPT' && n !== logModal && n.id !== 'toasts' && n.id !== 'fsModal') n.inert = on;
 }
 
 async function openLog(id) {
@@ -1157,8 +1553,39 @@ function closeLog() {
   loadJobs().then(() => { if (!logOpen()) logTrigger(id)?.focus(); });
 }
 $('#logMask').onclick = closeLog;                 // 点遮罩关闭
+/* fsModal 接线 */
+$('#fsMask').onclick = fsClose;
+$('#fsCloseBtn').onclick = fsClose;
+$('#fsUseDir').onclick = () => { if (fsState.cwd) fsWrite([fsState.cwd], true); };
+$('#fsConfirm').onclick = () => {                    // 加入选中：回填后弹框保持打开，可跨目录续选
+  const n = fsState.sel.length; if (!n) return;
+  fsWrite(fsState.sel.slice(), false, false);
+  fsState.sel = [];
+  fsRender();
+  toast(`已加入 ${n} 个路径`, 'ok', 2200);
+};
+$('#fsClear').onclick = () => { fsState.sel = []; fsRender(); };
+$('#fsFilter').addEventListener('input', (e) => { fsState.filter = e.target.value; fsRender(); });
+$('#fsOnlyOk').addEventListener('change', (e) => { fsState.onlyOk = e.target.checked; fsRender(); });
+
 document.addEventListener('keydown', (e) => {     // Esc 全局兜底（焦点在弹框内任何位置都关得掉）
+  const fsOpen = !$('#fsModal').hidden;
+  if (e.key === 'Escape' && fsOpen) { e.preventDefault(); fsClose(); return; }
   if (e.key === 'Escape' && logOpen()) { e.preventDefault(); closeLog(); }
+  if (fsOpen && e.key === '/' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName ?? '')) {
+    e.preventDefault(); $('#fsFilter').focus();    // '/' 快速进入过滤
+  }
+});
+$('#fsList').addEventListener('keydown', (e) => {  // ↑/↓/Home/End 在可用条目间移动焦点，Enter=点击
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+  const items = [...$('#fsList').querySelectorAll('.fsItem:not([disabled])')];
+  if (!items.length) return;
+  e.preventDefault();
+  const i = items.indexOf(document.activeElement);
+  const n = e.key === 'ArrowDown' ? (i < 0 ? 0 : Math.min(items.length - 1, i + 1))
+    : e.key === 'ArrowUp' ? Math.max(0, i - 1)
+    : e.key === 'Home' ? 0 : items.length - 1;
+  items[n].focus();
 });
 logDialog.addEventListener('keydown', (e) => {    // Tab 焦点圈在弹框里，不会跑到被遮住的列表后面
   if (e.key !== 'Tab') return;
@@ -1185,56 +1612,106 @@ $('#submit').onclick = async () => {
   }
   const type = params.type = $('#type').value;
   const pathVal = $('#inputPath')?.value.trim() || '';
-  const fileList = $('#file')?.files ? [...$('#file').files] : [];
+  const inPath = picker?.getMode?.() === 'path';          // FilePicker「服务器路径」模式
+  const fileList = treePick?.length ? [] : ($('#file')?.files ? [...$('#file').files] : []);
   const file = fileList[0];
-  const osgbFiles = $('#osgbDir')?.files ? [...$('#osgbDir').files] : [];
-  const osgbZip = $('#osgbZip')?.files?.[0] || null;
+  /* 防呆：服务器路径 / JSON 手改模式走纯 JSON 通道提交，multipart 附件字段
+   * （@prj/@cps/@cfg）不会被携带——旧版静默丢弃造成「投影文件未生效」。 */
+  if (inPath || jsonManual) {
+    const nm = { prj: '投影文件', cps: '控制点 CSV', cfg: '简化配置 CSV' };
+    const tip = {
+      prj: '「投影」组请改用「服务器投影文件」浏览选取（proj.prjPath）',
+      cps: '请把控制点内容粘贴到「控制点 CSV 文本」框',
+      cfg: '请切回「⬆ 上传」模式提交',
+    };
+    const picked = Object.keys(nm).filter((k) => $('#paramForm').querySelector(`[data-k="@${k}"]`)?.files?.[0]);
+    if (picked.length) {
+      const mode = jsonManual ? 'JSON 手改' : '服务器路径';
+      showMsg(`「${mode}」模式不携带上传附件（已选但不会生效：${picked.map((k) => nm[k]).join('、')}）——`
+        + picked.map((k) => tip[k]).join('；'), 'err');
+      toast(`${mode} 模式下上传附件不会生效`, 'err', 5200);
+      return;
+    }
+  }
   const btn = $('#submit'); btn.disabled = true;
   const old = btn.textContent; btn.textContent = ''; btn.append(el('span', { class: 'spinner' }), ' 提交中…');
   let res;
+  const form = $('#paramForm');
+  const appendAux = (fd) => {
+    for (const k of ['prj', 'cps', 'cfg']) {
+      const f = form.querySelector(`[data-k="@${k}"]`)?.files?.[0];
+      if (f) fd.append(k, f, f.name);
+    }
+  };
+  const sendLocalPath = async () => {
+    const jbody = { ...params };
+    const paths = type === 'tiles' ? pathVal.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    if (paths.length > 1) jbody.inputPaths = paths; else jbody.inputPath = pathVal;
+    // 仅 mesh 有模型路径消歧框；tiles 单路径指向文件夹时由服务端自动全选全部模型
+    if (type === 'mesh') {
+      const mp = $('#modelPaths')?.value.trim();
+      if (mp) jbody.modelPaths = mp.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    return fetch('/api/v1/jobs', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jbody) });
+  };
   try {
-    if (type === 'osgb' && osgbZip && !jsonManual) {
-      // ---- ZIP 上传：服务端解压重建树 ----
+    if (inPath) {
+      if (!pathVal) { showMsg('请填写服务器本地路径，或点「📂 浏览…」选择', 'err'); toast('路径为空', 'err', 2600); return; }
+      res = await sendLocalPath();
+    } else if (type === 'osgb' && !jsonManual && treePick?.length) {
+      // ---- OSGB 文件夹（拖入或目录选择器）：逐文件携带相对路径，服务端重建树 ----
       const fd = new FormData();
-      fd.append('options', JSON.stringify({ ...params, dirName: osgbZip.name.replace(/\.zip$/i, '') || 'osgb' }));
-      fd.append('file', osgbZip, osgbZip.name);
+      const rels = treePick.map((t) => t.rel);
+      fd.append('options', JSON.stringify({ ...params, relPaths: rels, dirName: String(rels[0]).split('/')[0] || 'osgb' }));
+      treePick.forEach((t, i) => fd.append('file', t.file, `f_${String(i + 1).padStart(6, '0')}`));
+      appendAux(fd);
       res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
-    } else if (type === 'osgb' && osgbFiles.length && !jsonManual) {
-      // ---- 目录上传：逐文件携带相对路径，服务端重建文件夹树 ----
+    } else if (type === 'osgb' && !jsonManual && file) {
+      if (!/\.zip$/i.test(file.name)) {
+        showMsg('OSGB 上传仅支持文件夹或 .zip——整目录请拖入/点「选文件夹」，超大目录用「服务器路径」模式', 'err');
+        toast('OSGB 需要文件夹或 ZIP', 'err', 4200);
+        return;
+      }
+      // ---- OSGB ZIP：服务端解压重建树 ----
       const fd = new FormData();
-      const rels = osgbFiles.map((f) => f.webkitRelativePath || f.name);
-      const dirName = (rels[0]?.split('/')[0]) || 'osgb';
-      fd.append('options', JSON.stringify({ ...params, relPaths: rels, dirName }));
-      osgbFiles.forEach((f, i) => fd.append('file', f, `f_${String(i + 1).padStart(6, '0')}`));
-      const prj = $('#paramForm').querySelector('[data-k="@prj"]')?.files?.[0];
-      const cps = $('#paramForm').querySelector('[data-k="@cps"]')?.files?.[0];
-      if (prj) fd.append('prj', prj, prj.name);
-      if (cps) fd.append('cps', cps, cps.name);
+      fd.append('options', JSON.stringify({ ...params, dirName: file.name.replace(/\.zip$/i, '') || 'osgb' }));
+      fd.append('file', file, file.name);
+      appendAux(fd);
+      res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
+    } else if ((type === 'tiles' || type === 'mesh') && !jsonManual
+      && (treePick?.length || /\.zip$/i.test(file?.name ?? ''))) {
+      if (!treePick?.length && fileList.length > 1) {
+        showMsg('ZIP 文件树不能与其他文件混选——请只选 ZIP，或只选模型文件（可多选）', 'err');
+        toast('混选了 ZIP 与模型文件', 'err', 3200);
+        return;
+      }
+      // ---- 文件树通道：文件夹（relPaths 重建，含子目录贴图）或 模型+贴图 ZIP ----
+      const fd = new FormData();
+      const opts = { ...params };
+      if (treePick?.length) opts.relPaths = treePick.map((t) => t.rel);
+      const mp = $('#modelPaths')?.value.trim();
+      if (mp) opts.modelPaths = mp.split(',').map((s) => s.trim()).filter(Boolean);
+      fd.append('options', JSON.stringify(opts));
+      if (treePick?.length) treePick.forEach((t, i) => fd.append('file', t.file, `f_${String(i + 1).padStart(6, '0')}`));
+      else fd.append('file', file, file.name);
+      appendAux(fd);
       res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
     } else if (file && !jsonManual) {
       const fd = new FormData();
       fd.append('options', JSON.stringify(params));
       // tiles：全部选中文件一次上传（服务端统一参数逐个转换后合并）
       for (const f of (type === 'tiles' ? fileList : [file])) fd.append('file', f, f.name);
-      const prj = $('#paramForm').querySelector('[data-k="@prj"]')?.files?.[0];
-      const cps = $('#paramForm').querySelector('[data-k="@cps"]')?.files?.[0];
-      const cfg = $('#paramForm').querySelector('[data-k="@cfg"]')?.files?.[0];
-      if (prj) fd.append('prj', prj, prj.name);
-      if (cps) fd.append('cps', cps, cps.name);
-      if (cfg) fd.append('cfg', cfg, cfg.name);
+      appendAux(fd);
       res = await fetch('/api/v1/jobs', { method: 'POST', headers: {}, body: fd });
-    } else if (pathVal || !file) {
-      if (type !== 'osgb' && !pathVal && !file) { showMsg('请选择输入文件，或填写服务器本地路径', 'err'); return; }
-      if (type === 'osgb' && !pathVal && !osgbFiles.length) { showMsg('请选择 OSGB 文件夹，或填写服务器本地路径', 'err'); return; }
-      const jbody = { ...params };
-      const paths = type === 'tiles' ? pathVal.split(',').map((s) => s.trim()).filter(Boolean) : [];
-      if (paths.length > 1) jbody.inputPaths = paths; else jbody.inputPath = pathVal;
-      res = await fetch('/api/v1/jobs', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(jbody) });
-    } else {
-      showMsg('JSON 模式仅支持「服务器本地路径」输入', 'err');
+    } else if (!jsonManual) {
+      showMsg('请选择输入（文件 / ZIP / 文件夹），或切换到「🖥 服务器路径」', 'err');
+      toast('未选择输入', 'err', 2600);
       return;
+    } else {
+      // JSON 手改模式：沿用「服务器本地路径」提交
+      if (!pathVal) { showMsg('JSON 模式仅支持「服务器本地路径」输入（切到「服务器路径」模式填写）', 'err'); return; }
+      res = await sendLocalPath();
     }
     const body = await res.json().catch(() => null);
     if (!res.ok) {

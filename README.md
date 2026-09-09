@@ -29,9 +29,18 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 - ✅ `tiles` 多文件转换：一次提交多个模型、共用同一套转换参数，逐个切片后由
   [3d-tiles-tools](https://github.com/CesiumGS/3d-tiles-tools) 合并为统一 `tileset.json`；
   单/多文件目录逻辑一致——每个输入产出 `out/<名>/`，统一入口恒为 `out/tileset.json`
+- ✅ 带贴图模型走「文件树」上传：`relPaths` 文件夹上传或 **模型+贴图 ZIP**（引擎按模型所在目录
+  解析 FBX/OBJ 外部贴图，只传模型文件会丢贴图）；tiles 自动识别树内**全部**模型并统一参数逐个
+  转换后合并（API 可用 `modelPath`/`modelPaths` 收窄），mesh 保持单模型语义、多候选时消歧
+- ✅ 控制台统一文件选择组件：一个拖拽区全收 模型文件 / 模型+贴图 ZIP / 整个文件夹，
+  内置「⬆ 上传 ↔ 🖥 服务器路径」切换（服务器未开 `MGO_ALLOW_LOCAL_PATH` 时路径段置灰并提示
+  开启方式）；路径模式可手填或**浏览服务器目录点选**（名称过滤、只看可选、面包屑、跨目录
+  多选、键盘导航，**已选条目自动置灰禁选、不可重复选中**）（只读、限 `MGO_ALLOWED_ROOTS`、受写 IP 白名单保护），本机大模型免上传原地处理
 - ✅ 切片跑在原生 C++ 进程，terrain 出瓦多线程并行；简化基于扩展版 meshoptimizer，
   锁定瓦片边界不留缝；服务层任务排队限流、可取消、超时兜底、成果按 TTL 自动清理
-- ✅ 坐标系引擎：EPSG / WKT / `+proj` / `.prj` 定义投影，7 参数 Helmert、单锚点、
+- ✅ 坐标系引擎：EPSG / WKT / `+proj` / `.prj` 定义投影——上传模式直接附带投影文件，
+  服务器路径模式在控制台浏览选取本机 `.prj/.wkt`（`proj.prjPath`，文件优先于文本框）；
+  7 参数 Helmert、单锚点、
   多控制点最小二乘配准（可自动探测源投影），大场景逐顶点重投影消除切面残差；
   三维转地心坐标、二维转经纬度，前端零补偿
 - ✅ Windows / Linux 双平台，Node.js 服务形态，自带 systemd unit；第三方前端只需调 REST API
@@ -63,8 +72,11 @@ npm start                                   # 监听 0.0.0.0:8080
 curl http://127.0.0.1:8080/api/v1/health    # 返回 {"status":"ok",…} 即启动成功
 ```
 
-浏览器打开 `http://127.0.0.1:8080/console.html`：选任务类型 → 拖入文件 → 「提交任务」→
-进度走完点「打开查看器」，成果渲染在地球上。
+浏览器打开 `http://127.0.0.1:8080/console.html`：选任务类型 → 拖入文件（模型 / 模型+贴图 ZIP /
+整个文件夹）→「提交任务」→ 进度走完点「打开查看器」，成果渲染在地球上。输入区顶部是
+「⬆ 上传 ↔ 🖥 服务器路径」切换段：切到后者可手填或**浏览服务器目录点选**本机文件/文件夹
+（原地处理，不上传不搬动）。本机的 8080 服务已通过仓库根 `.env` 启用该模式
+（`MGO_ALLOWED_ROOTS=/root/coding`）；未启用的部署里路径段置灰，悬停即可看到开启方法。
 
 **API 提交**（不用网页时）：
 
@@ -77,9 +89,22 @@ curl -F 'options={"type":"terrain"}' -F file=@dem.tif http://127.0.0.1:8080/api/
 curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' \
   -F file=@tower.fbx -F file=@podium.obj http://127.0.0.1:8080/api/v1/jobs
 
-# 或引用服务器本地文件（需 MGO_ALLOW_LOCAL_PATH=1；tiles 支持 inputPaths 多路径）
+# 模型带外部贴图时打包成 ZIP（贴图须与模型同目录，否则切片丢贴图）；
+# tiles 树上传自动识别全部模型（modelPaths 可选：显式收窄到指定文件）
+curl -F 'options={"type":"tiles","modelPaths":["bridge/root.fbx","roadbed/root.fbx"],
+              "origin":[498700,2929900,0]}' \
+  -F file=@models.zip -F prj=@103d10m.prj http://127.0.0.1:8080/api/v1/jobs
+
+# 或引用服务器本地文件/文件夹（需 MGO_ALLOW_LOCAL_PATH=1，路径限制在 MGO_ALLOWED_ROOTS 内；
+# 本地输入一律【原地处理】，服务端不移动/不复制任何文件）
+#   tiles/mesh：inputPath 可直接指向「模型+贴图」文件夹（tiles 自动全选全部模型；mesh 单模型，
+#   多候选用 modelPaths 消歧）；
+#   tiles 亦支持 inputPaths 多个模型文件路径
 curl -H 'Content-Type: application/json' \
-  -d '{"type":"tiles","inputPaths":["/data/city.fbx","/data/park.obj"],"proj":{"crs":"EPSG:4526"}}' \
+  -d '{"type":"tiles","inputPath":"/data/city/","proj":{"prjPath":"/data/103d10m.prj"},"origin":[498700,2929900,0]}' \
+  http://127.0.0.1:8080/api/v1/jobs
+curl -H 'Content-Type: application/json' \
+  -d '{"type":"tiles","inputPaths":["/data/bridge/root.fbx","/data/roadbed/root.fbx"],"proj":{"crs":"EPSG:4526"}}' \
   http://127.0.0.1:8080/api/v1/jobs
 ```
 

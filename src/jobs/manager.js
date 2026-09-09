@@ -125,13 +125,28 @@ export class JobManager extends EventEmitter {
           throw httpError(400, `missing uploaded file: ${nm}`, 'INPUT_MISSING');
         }
       }
-    } else if (input.kind === 'upload-dir') {
-      // directory upload: the route rebuilt the folder tree inside stagedDir;
-      // move the whole tree into this job's input/ (osgb root = input dir)
+    } else if (input.kind === 'upload-dir' || input.kind === 'upload-tree') {
+      // directory / model-tree upload: the route rebuilt the folder tree in
+      // stagedDir (relPaths folder picker or ZIP extract); move it intact into
+      // this job's input/ — tiles & mesh carry side-car textures next to the
+      // model there, which is where the engine looks for them.
       if (input.stagedDir) {
         await moveTree(input.stagedDir, this.inputDir(id));
         await fsp.rm(input.stagedDir, { recursive: true, force: true });
+      }
+      if (input.kind === 'upload-dir') {
+        // osgb root = the whole input dir
         input = { kind: 'upload-dir', name: input.name, prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
+      } else {
+        input = { kind: 'upload-tree', models: input.models, name: input.models[0],
+          ...(input.models.length > 1 ? { names: input.models } : {}),
+          prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
+        for (const m of input.models) {
+          if (!fs.existsSync(path.join(this.inputDir(id), m))) {
+            await fsp.rm(this.jobDir(id), { recursive: true, force: true });
+            throw httpError(400, `missing model in uploaded tree: ${m}`, 'INPUT_MISSING');
+          }
+        }
       }
     } else {
       input.paths = (input.paths ?? [input.path]).map((p) => path.resolve(p));
@@ -179,6 +194,12 @@ export class JobManager extends EventEmitter {
       return names.map((n) => ({ name: n, path: path.join(this.inputDir(job.id), n) }));
     }
     if (inp.kind === 'upload-dir') return [{ name: inp.name, path: this.inputDir(job.id) }];
+    if (inp.kind === 'upload-tree') {
+      // model + side-car textures live at their original relative paths
+      return (inp.models ?? [inp.name]).map((m) => ({
+        name: m, path: path.join(this.inputDir(job.id), m),
+      }));
+    }
     const paths = inp.paths ?? [inp.path];
     return paths.map((p, i) => ({
       name: inp.names?.[i] ?? path.basename(p), path: p,
@@ -250,7 +271,9 @@ export class JobManager extends EventEmitter {
     const files = this.jobFiles(job);
     const outDir = this.outDir(job.id);
     const used = new Set();
-    const steps = files.map((f) => ({ ...f, stem: tileStem(f.name, used) }));
+    // tree uploads carry relative names (bridge/root.fbx) — fold separators into
+    // the stem so out/<stem>/ stays unique and readable
+    const steps = files.map((f) => ({ ...f, stem: tileStem(String(f.name).split(/[\\/]+/).join('_'), used) }));
     const N = steps.length;
     const parser = new ProgressParser();
 

@@ -43,6 +43,31 @@ function uniqueName(taken, orig) {
   return cand;
 }
 
+/** Sorted relative file list of a directory tree (zip / local-tree inventory). */
+async function listTree(dir, cap, label = 'uploaded tree') {
+  const out = [];
+  const walk = async (d, prefix) => {
+    for (const e of await fsp.readdir(d, { withFileTypes: true })) {
+      if (out.length >= cap) {
+        throw err(400, 'TOO_MANY_FILES',
+          `more than ${cap} files in the ${label} — point at the model's own folder, or pass the model file(s) directly`);
+      }
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (e.isDirectory()) await walk(path.join(d, e.name), rel);
+      else if (e.isFile()) out.push(rel);
+    }
+  };
+  await walk(dir, '');
+  return out.sort();
+}
+
+/* Job types that may arrive as a FILE TREE (model + side-car textures).  The
+ * engine resolves external textures relative to the model's own directory,
+ * so uploads must keep the original layout — moving only root.fbx into the
+ * job input dir silently drops every side-car image (assimp then embeds a
+ * 70-byte 1×1 placeholder PNG). */
+const TREE_TYPES = new Set(['tiles', 'mesh']);
+
 export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
   /* ---- write-protection: IP whitelist (localhost always allowed) ----
    * Mutations (POST/DELETE) require a whitelisted client IP.  Reads stay
@@ -113,6 +138,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     features: {
       osgb: mgo.hasOsgb,
       localPathInput: cfg.allowLocalPath,
+      fsBrowse: cfg.allowLocalPath,
       multiFileTiles: Boolean(cfg.tilesToolsCli),
       authMode: 'ip-whitelist',
     },
@@ -123,6 +149,50 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     },
     cesium: { version: '1.111', selfHosted: cesiumLocal },
   }));
+
+  /* ---- server file browser (console "服务器路径" mode) ----
+   * POST on purpose: the preHandler write-gate (IP whitelist) applies, so
+   * directory enumeration is only reachable by clients allowed to submit jobs
+   * anyway.  Listing stays strictly inside MGO_ALLOWED_ROOTS (realpath-based,
+   * same containment rules as checkLocalPath); dotfiles hidden. */
+  app.post('/api/v1/fs/browse', async (req) => {
+    if (!cfg.allowLocalPath) {
+      throw err(403, 'LOCAL_PATH_DISABLED',
+        'server-local paths are disabled — set MGO_ALLOW_LOCAL_PATH=1 to browse/submit local inputs');
+    }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const raw = typeof body.path === 'string' ? body.path.trim() : '';
+    const rootReals = [];
+    const roots = cfg.allowedRoots.map((r) => {
+      try {
+        const rp = fs.realpathSync(r);
+        rootReals.push(rp);
+        return { path: rp, name: path.basename(rp) || rp, ok: true };
+      } catch { return { path: r, name: path.basename(r) || r, ok: false }; }
+    });
+    if (!raw) return { roots, cwd: null, dirs: [], files: [], parent: null };
+    const dir = checkLocalPath(raw, cfg, { kind: 'dir', label: 'path' });
+    const CAP = 1000;
+    const dirs = []; const files = [];
+    let truncated = false;
+    for (const e of await fsp.readdir(dir, { withFileTypes: true })) {
+      if (e.name.startsWith('.') && body.showHidden !== true) continue;
+      if (e.isDirectory()) {
+        if (dirs.length < CAP) dirs.push(e.name); else truncated = true;
+      } else if (e.isFile()) {
+        if (files.length >= CAP) { truncated = true; continue; }
+        let size = null;
+        try { size = fs.statSync(path.join(dir, e.name)).size; } catch { /* raced away */ }
+        files.push({ name: e.name, size });
+      }
+    }
+    dirs.sort((a, b) => a.localeCompare(b, 'zh'));
+    files.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+    // offer "up" only while the parent still sits inside an allowed root
+    const parent = path.dirname(dir);
+    const insideRoot = rootReals.some((rr) => parent === rr || (parent + path.sep).startsWith(rr + path.sep));
+    return { roots, cwd: dir, parent: insideRoot && parent !== dir ? parent : null, dirs, files, truncated };
+  });
 
   /* ---- IP whitelist management (localhost only) ---- */
   app.get('/api/v1/whitelist', async (req) => {
@@ -153,6 +223,57 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     cfg.whitelist.push(...all);   // live update (config.isAllowedIp closes over this array)
     return reply.code(200).send({ whitelist: cfg.whitelist });
   });
+
+  /**
+   * Which model(s) inside an uploaded file tree (relPaths or ZIP) feed the
+   * converter.  options.modelPath (one, or comma-separated) / modelPaths
+   * (array) narrow the choice explicitly; otherwise tiles auto-takes EVERY
+   * model in the tree (converted with uniform params, then merged), while
+   * mesh — single-model by nature — requires exactly one candidate or an
+   * explicit modelPath (textures and other side-cars are expected around it).
+   */
+  function resolveTreeModels(type, rels, options) {
+    const explicit = options.modelPaths ?? options.modelPath;
+    delete options.modelPaths; delete options.modelPath;
+    const exts = INPUT_EXT[type];
+    const isModel = (r) => exts.includes(extOf(r));
+    let picked;
+    if (explicit !== undefined && explicit !== null && String(explicit).trim() !== '') {
+      const want = (Array.isArray(explicit) ? explicit : String(explicit).split(','))
+        .map((w) => String(w).trim().replace(/\\/g, '/')).filter(Boolean);
+      for (const w of want) {
+        if (!rels.includes(w)) {
+          throw err(422, 'MODEL_NOT_IN_TREE', `modelPath "${w}" is not part of the uploaded tree`,
+            { hint: 'path is relative to the uploaded folder / zip root' });
+        }
+        if (!isModel(w)) {
+          throw err(422, 'INPUT_EXT', `modelPath "${w}" is not a ${type} model file`, { expected: exts });
+        }
+      }
+      picked = [...new Set(want)];
+    } else {
+      const cands = rels.filter(isModel);
+      if (!cands.length) {
+        throw err(422, 'NO_MODEL_IN_TREE',
+          `the uploaded files contain no ${type} model (${exts.join('/')}) — the model must be part of the tree`,
+          { files: rels.slice(0, 30) });
+      }
+      if (cands.length > 1 && type !== 'tiles') {
+        throw err(422, 'MODEL_AMBIGUOUS',
+          `${cands.length} candidate models in the upload — pick with modelPath/modelPaths`,
+          { candidates: cands.slice(0, 20) });
+      }
+      // tiles: several candidates → convert them ALL with uniform params, then merge
+      picked = cands;
+    }
+    if (type === 'mesh' && picked.length > 1) {
+      throw err(422, 'MODEL_AMBIGUOUS', 'mesh converts one model at a time — set a single modelPath');
+    }
+    if (picked.length > cfg.maxInputFiles) {
+      throw err(400, 'TOO_MANY_INPUT_FILES', `more than ${cfg.maxInputFiles} models (MGO_MAX_INPUT_FILES)`);
+    }
+    return picked;
+  }
 
   /* ---- create job ---- */
   app.post('/api/v1/jobs', async (req, reply) => {
@@ -226,14 +347,22 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
           throw err(422, 'BAD_OPTIONS', 'options must be a JSON object');
         }
 
+        // ---- tree channels: relPaths folder upload, or one ZIP that extracts
+        // to a directory tree (keeps FBX/OBJ side-car textures resolvable) ----
+        let rels = null;
         if (Array.isArray(options.relPaths)) {
-          // ---- directory upload (osgb folders): relPaths[i] ↔ i-th `file` part ----
-          const rels = options.relPaths.map((r) => String(r).replace(/\\/g, '/')).filter(Boolean);
-          if (rels.length !== dirFiles.length) {
-            throw err(422, 'REL_PATHS_MISMATCH',
-              `relPaths(${rels.length}) must match number of uploaded files(${dirFiles.length})`);
+          if (options.type !== 'osgb' && !TREE_TYPES.has(options.type)) {
+            throw err(400, 'INPUT_TYPE',
+              'relPaths folder uploads are supported for osgb (whole folder) and tiles/mesh (model + textures)');
           }
-          for (const rel of rels) {
+          // relPaths[i] ↔ i-th `file` part (browser folder picker)
+          const relParts = options.relPaths.map((r) => String(r).replace(/\\/g, '/')).filter(Boolean);
+          delete options.relPaths;
+          if (relParts.length !== dirFiles.length) {
+            throw err(422, 'REL_PATHS_MISMATCH',
+              `relPaths(${relParts.length}) must match number of uploaded files(${dirFiles.length})`);
+          }
+          for (const rel of relParts) {
             const segs = rel.split('/');
             if (segs.some((s) => !s || s === '.' || s === '..' || /[:\x00]/.test(s))) {
               throw err(422, 'BAD_REL_PATH', `unsafe relative path "${rel}"`);
@@ -241,21 +370,51 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
           }
           // rebuild the folder tree inside the staged dir
           for (let i = 0; i < dirFiles.length; i++) {
-            const dest = path.join(stagedDir, rels[i]);
+            const dest = path.join(stagedDir, relParts[i]);
             await fsp.mkdir(path.dirname(dest), { recursive: true });
             await fsp.rename(path.join(stagedDir, dirFiles[i].seq), dest);
           }
-          const dirName = sanitizeFileName(String(options.dirName ?? rels[0].split('/')[0] ?? 'osgb'));
-          validateInput(options.type, { name: dirName, kind: 'dir' });
-          input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
-          delete options.relPaths; delete options.dirName;
+          rels = relParts;
+        } else if (dirFiles.length === 1 && TREE_TYPES.has(options.type)
+          && extOf(dirFiles[0].orig) === 'zip') {
+          const zipBuf = await fsp.readFile(path.join(stagedDir, dirFiles[0].seq));
+          await fsp.rm(path.join(stagedDir, dirFiles[0].seq), { force: true });
+          try {
+            const extracted = await extractZip(zipBuf, stagedDir, {
+              maxEntries: cfg.uploadMaxFiles,
+              maxTotalBytes: Math.max(cfg.uploadMaxBytes, 1) * 4,
+            });
+            if (!extracted.files) throw err(400, 'EMPTY_ZIP', 'zip archive contains no files');
+          } catch (ze) {
+            if (ze.code === 'ZIP_BOMB') throw err(400, 'ZIP_BOMB', ze.message);
+            if (ze.statusCode) throw ze;
+            throw err(422, 'ZIP_PATH', ze.message);
+          }
+          rels = await listTree(stagedDir, cfg.uploadMaxFiles);
+        }
+
+        if (rels) {
+          if (options.type === 'osgb') {
+            const dirName = sanitizeFileName(String(options.dirName ?? rels[0].split('/')[0] ?? 'osgb'));
+            delete options.dirName;
+            validateInput(options.type, { name: dirName, kind: 'dir' });
+            input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
+          } else {
+            if (options.dirName) throw err(422, 'BAD_OPTIONS', 'dirName is only valid for osgb uploads');
+            const models = resolveTreeModels(options.type, rels, options);
+            input = {
+              kind: 'upload-tree', models,
+              name: models[0], ...(models.length > 1 ? { names: models } : {}),
+              prjName, cpsName, cfgName, stagedDir,
+            };
+          }
         } else {
-          // ---- file upload(s): one file for every type; `tiles` also accepts
-          // several `file` parts — all converted with the SAME options params,
-          // then merged into one unified tileset.json (3d-tiles-tools) ----
+          // ---- flat file upload(s): one file for every type; `tiles` also
+          // accepts several `file` parts — all converted with the SAME options
+          // params, then merged into one unified tileset.json (3d-tiles-tools) ----
           if (dirFiles.length > 1 && options.type !== 'tiles') {
             throw err(400, 'TOO_MANY_FILES',
-              'expected exactly one file field "file" (multi-file upload is tiles-only; for a directory use options.relPaths)');
+              'expected exactly one file field "file" (multi-file upload is tiles-only; for a folder use options.relPaths)');
           }
           if (dirFiles.length > cfg.maxInputFiles) {
             throw err(400, 'TOO_MANY_INPUT_FILES',
@@ -267,10 +426,9 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
           const names = [];
           for (const df of dirFiles) {
             const nm = uniqueName(names, df.orig);
-            const ext = extOf(nm);
-            if (dirFiles.length === 1 && options.type === 'osgb' && ext === 'zip') {
-              // zip upload → stream-extract (bomb-safe) into the staged dir,
-              // then treat exactly like a folder upload
+            if (dirFiles.length === 1 && options.type === 'osgb' && extOf(nm) === 'zip') {
+              // osgb zip upload → stream-extract (bomb-safe) into the staged
+              // dir, then treat exactly like a folder upload
               const zipBuf = await fsp.readFile(path.join(stagedDir, df.seq));
               await fsp.rm(path.join(stagedDir, df.seq), { force: true });
               let extracted;
@@ -288,7 +446,6 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
               validateInput(options.type, { name: dirName, kind: 'dir' });
               input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
               delete options.dirName;
-              df.consumed = true;
               break;
             }
             await fsp.rename(path.join(stagedDir, df.seq), path.join(stagedDir, nm));
@@ -330,27 +487,54 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         }
         paths = ps;
       } else if (p) {
-        paths = [p];
+        // single inputPath — a file (any type) or, for tiles/mesh, a local
+        // model+textures DIRECTORY.  Local inputs are ALWAYS processed in
+        // place: nothing is moved or copied (package+extract is the remote
+        // upload channel's job, not the local one's).
+        const isLocalDir = TREE_TYPES.has(options.type)
+          && fs.existsSync(path.resolve(p)) && fs.statSync(path.resolve(p)).isDirectory();
+        if (isLocalDir) {
+          const root = checkLocalPath(p, cfg, { kind: 'dir', label: 'inputPath' });
+          const rels = await listTree(root, cfg.uploadMaxFiles, 'local model folder');
+          const models = resolveTreeModels(options.type, rels, options); // consumes modelPath(s)
+          input = {
+            kind: 'path',
+            paths: models.map((m) => path.join(root, m)),
+            path: path.join(root, models[0]),
+            names: models,
+            name: models[0],
+            root,
+          };
+          paths = null;
+        } else {
+          paths = [p];
+        }
       } else {
         throw err(422, 'INPUT_REQUIRED', 'provide a multipart "file" or JSON "inputPath"/"inputPaths"');
       }
-      const abs = paths.map((x) => checkLocalPath(x, cfg, { kind, label: 'inputPath' }));
-      for (const a of abs) validateInput(options.type, { name: path.basename(a), kind });
-      if (abs.length > 1) {
-        input = {
-          kind: 'path',
-          paths: abs,
-          path: abs[0],
-          names: abs.map((a) => path.basename(a)),
-          name: path.basename(abs[0]),
-        };
-      } else {
-        input = { kind: 'path', path: abs[0], name: path.basename(abs[0]) };
+      if (paths) {
+        const abs = paths.map((x) => checkLocalPath(x, cfg, { kind, label: 'inputPath' }));
+        for (const a of abs) validateInput(options.type, { name: path.basename(a), kind });
+        if (abs.length > 1) {
+          input = {
+            kind: 'path',
+            paths: abs,
+            path: abs[0],
+            names: abs.map((a) => path.basename(a)),
+            name: path.basename(abs[0]),
+          };
+        } else {
+          input = { kind: 'path', path: abs[0], name: path.basename(abs[0]) };
+        }
       }
     } else {
       throw err(415, 'UNSUPPORTED_MEDIA', 'use multipart/form-data or application/json');
     }
 
+    if ('modelPath' in options || 'modelPaths' in options) {
+      throw err(422, 'BAD_OPTIONS',
+        'modelPath/modelPaths is only valid for model trees (options.relPaths upload, model+textures ZIP, or a local inputPath folder)');
+    }
     const parsed = jobSchema.safeParse(options);
     if (!parsed.success) {
       throw err(422, 'VALIDATION', 'invalid job options',

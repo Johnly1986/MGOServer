@@ -319,6 +319,7 @@ sequenceDiagram
 | GET | `/api/v1/health` | 存活探针：`{status, uptime, version, mgo:{path, version, hasOsgb}}` |
 | GET | `/api/v1/capabilities` | 能力发现：子命令清单、`osgb` 是否可用（F9）、限额参数 |
 | POST | `/api/v1/jobs` | 创建任务（multipart：`file`+`options`；或 JSON：`inputPath`/`inputUrl` 直读模式） |
+| POST | `/api/v1/fs/browse` | 控制台「服务器路径」模式的只读目录浏览（`MGO_ALLOW_LOCAL_PATH=1` 才启用；POST 以沿用写 IP 闸门；仅 `MGO_ALLOWED_ROOTS` 内，realpath 防逃逸，隐藏文件不列） |
 | GET | `/api/v1/jobs` | 任务列表（`?type=&status=&cursor=&limit=`） |
 | GET | `/api/v1/jobs/{id}` | 任务详情（含 progress、artifacts、error） |
 | GET | `/api/v1/jobs/{id}/events` | **SSE** 进度/状态事件流 |
@@ -342,8 +343,9 @@ POST /api/v1/jobs            Content-Type: multipart/form-data
 ```
 
 ```
-POST /api/v1/jobs            Content-Type: application/json     # 同机直读模式
+POST /api/v1/jobs            Content-Type: application/json     # 同机直读模式（原地处理，不搬文件）
   { "type": "tiles", "inputPath": "D:/proj/roadbed.fbx", …params }
+  { "type": "tiles", "inputPath": "D:/proj/bridge/", "modelPaths": ["root.fbx"], …params }  # 模型+贴图文件夹
   { "type": "tiles", "inputPaths": ["D:/a.fbx","D:/b.obj"], …params }  # 仅 tiles 多文件
 ```
 
@@ -361,6 +363,37 @@ POST /api/v1/jobs            Content-Type: application/json     # 同机直读�
   报告合并工具是否可用。
 - 进度：各输入独立映射到 0–98%，合并阶段 99→100%（`phase:"merge"`）。
 
+**模型 + 贴图文件树上传（`tiles` / `mesh`）**：引擎（assimp）按**模型文件所在目录**解析 FBX/OBJ
+的外部贴图引用，只上传模型文件会使全部材质退化为 1×1 占位图（切片丢贴图）。因此 `tiles`/`mesh`
+支持保持目录结构的「文件树」上传，两种形态：
+
+- 文件夹上传：`options.relPaths`（与第 i 个 `file` part 一一对应的相对路径，浏览器
+  `webkitRelativePath`），服务端在任务 `input/` 内重建树；
+- ZIP 上传：单个 `.zip` 的 `file` part（bomb 防护与 osgb 共用 `extractZip`），解压进 `input/`。
+
+树内模型可由 `options.modelPath`（单个或逗号分隔）/ `modelPaths`（数组）显式指定；缺省时
+`tiles` **自动选取树内全部模型**（统一参数逐个转换后合并，控制台因此不设模型路径框），`mesh`
+保持单模型语义——恰好一个自动识别、多个报 `422 MODEL_AMBIGUOUS`（返回候选列表）、零个报
+`422 NO_MODEL_IN_TREE`，指定路径不在树内报 `422 MODEL_NOT_IN_TREE`。转换的 `-i` 直接指向树内模型相对路径
+（`input/bridge/root.fbx`），贴图与其同层即可被解析。`tiles` 的 out 子目录 stem 由相对路径折叠
+而成（`bridge/root.fbx` → `out/bridge_root/`），多模型仍走统一参数 + `mergeJson` 合并；
+`mesh` 树上传只允许单模型。osgb 整目录语义不变；`terrain` 等其余类型不接受 relPaths。
+
+**本地路径 = 严格原地处理（`inputPath` / `inputPaths`）**：远程客户端走「打包上传→解压进
+`input/`」；本地（同机）输入**一律不移动、不复制**，引擎直接引用原路径——模型目录里贴图天然
+同层，本无搬动必要。对 `tiles`/`mesh`，`inputPath` 除模型文件外还接受**模型+贴图文件夹**：
+服务端在允许的根内列出文件树（`MGO_UPLOAD_MAX_FILES` 上限防爆），复用与 ZIP 上传完全相同的
+`modelPath(s)`/自动识别规则，`-i` 指向树内模型的绝对路径，任务 `input/` 保持为空。
+`inputPaths` 多路径仍只收文件（目录项报 400）。输出目录/合并逻辑与上传通道一致。
+
+**控制台文件选择组件（`public/console.html` 内 `FilePicker`）**：所有任务类型共用同一个输入
+控件，内含分段切换按钮「⬆ 上传 ↔ 🖥 服务器路径」。上传模式即上述拖拽区（模型文件 / 模型+贴图
+ZIP / 整个文件夹，OSGB 与 tiles/mesh 同组件，走 relPaths 或 ZIP 树通道）；服务器路径模式显示
+`inputPath` 文本框 +「📂 浏览…」按钮，点开只读目录浏览器（`POST /api/v1/fs/browse`）逐级点选
+`MGO_ALLOWED_ROOTS` 内的目录/文件（tiles 可多选回填逗号串，点「选择当前文件夹」取整目录原地树
+处理）。切换段**恒渲染**（组件形态稳定、功能可发现）：服务端未开 `MGO_ALLOW_LOCAL_PATH`
+时「服务器路径」段置灰不可点，tooltip 直接写明开启方式；「📂 浏览…」按钮随路径面板一并禁用。
+
 #### 6.3.2 公共参数对象（跨类型复用）
 
 ```jsonc
@@ -375,10 +408,12 @@ POST /api/v1/jobs            Content-Type: application/json     # 同机直读�
               "fitOrder": 1, "autoCrs": false,
               "offset": [0,0,0] } }
 
-// proj —— 映射 --prj：三选一
+// proj —— 映射 --prj：三选一，优先级 上传附件 > prjPath > crs
 { "proj": { "crs": "EPSG:4547" } }            // 内联 EPSG/WKT/+proj
-{ "proj": { "prjFile": "<上传的 .prj>" } }     // 上传 .prj
-{ "proj": { "prjPath": "D:/data/cgcs2000.prj" } } # 直读模式
+{ "prj": "<multipart 文件字段>" }              // 上传通道：随表单一并发 .prj/.wkt/.proj（落盘 _projection.*）
+{ "proj": { "prjPath": "D:/data/cgcs2000.prj" } } // 直读模式（服务器路径通道，限 MGO_ALLOWED_ROOTS）
+// 控制台：上传模式在「投影」组选文件；「🖥 服务器路径」模式在同组
+// 「服务器投影文件」行浏览选取（写入 proj.prjPath，与 crs 互斥、文件优先）。
 ```
 
 #### 6.3.3 `type: "tiles"`（→ `mgo tiles`）
