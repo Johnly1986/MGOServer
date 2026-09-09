@@ -1546,20 +1546,6 @@ async function openLog(id) {
   render();                                     // 标记正在看日志的行
   logDialog.focus({ preventScroll: true });     // 键盘/Esc 立刻可用
   const stale = () => gen !== logGen || logJobId !== id;
-  // render history FIRST, then attach EventSource — otherwise a late fetch
-  // callback clobbers live [progress] lines already appended (was a real race)
-  try {
-    // 弹框比原来的内嵌面板高得多，历史行数相应放宽（服务端 tail 上限 2000）
-    const o = await (await fetch(`/api/v1/jobs/${id}/log?tail=300`)).json();
-    if (stale()) return;                        // 弹框已切到别的任务：别覆盖
-    $('#logBox').textContent = (o.lines || []).join('\n') + '\n—— 以下为实时日志 ——\n';
-  } catch {
-    if (stale()) return;
-    $('#logBox').textContent = '—— 实时日志 ——\n';
-  }
-  scroll();
-  if (stale()) return;                          // fetch 期间被 closeLog/重开：不再挂流
-  es = new EventSource(`/api/v1/jobs/${id}/events`);
   // 实时行必须是真实 <span> 元素（Element.append 收到字符串只会当纯文本插入，
   // 曾导致 <span …> 包装标签原样露在日志里、颜色类从未生效）
   const logSpan = (cls, text) => {
@@ -1571,6 +1557,38 @@ async function openLog(id) {
       box.append(s, '\n');
     } else box.append(`${text}\n`);
   };
+  // 终态任务没有"实时"可言：run.log 历史已完整，挂 SSE 只会把事件缓冲区
+  // 重放一遍——模块行/进度在历史里都已出现，用户看到同样内容两遍。
+  const TERMINAL_ST = ['succeeded', 'failed', 'canceled', 'usage_error'];
+  const wasTerminal = TERMINAL_ST.includes(jobs.get(id)?.status);
+  // render history FIRST, then attach EventSource — otherwise a late fetch
+  // callback clobbers live [progress] lines already appended (was a real race)
+  try {
+    // 弹框比原来的内嵌面板高得多，历史行数相应放宽（服务端 tail 上限 2000）
+    const o = await (await fetch(`/api/v1/jobs/${id}/log?tail=300`)).json();
+    if (stale()) return;                        // 弹框已切到别的任务：别覆盖
+    $('#logBox').textContent = (o.lines || []).join('\n')
+      + (wasTerminal ? '\n' : '\n—— 以下为实时日志 ——\n');
+  } catch {
+    if (stale()) return;
+    $('#logBox').textContent = wasTerminal ? '' : '—— 实时日志 ——\n';
+  }
+  scroll();
+  if (wasTerminal) {
+    // 打开瞬间恰好完成的竞态：以服务端权威状态纠正徽章/行，并补一行终态
+    try {
+      const j = await (await fetch(`/api/v1/jobs/${id}`)).json();
+      if (stale()) return;
+      const row = jobs.get(id);
+      if (row && j.status !== row.status) { row.status = j.status; render(); }
+      logBadge(j.status);
+      logSpan('t-status', `[status] ${j.status}`);
+      scroll();
+    } catch { /* 服务离线：历史已在，徽章保持打开时的值 */ }
+    return;
+  }
+  if (stale()) return;                          // fetch 期间被 closeLog/重开：不再挂流
+  es = new EventSource(`/api/v1/jobs/${id}/events`);
   es.addEventListener('log', (m) => {
     const line = JSON.parse(m.data).line;
     const cls = /\[(?:Progress|Done)\]/.test(line) ? 't-prog' : (/^Error|错误|warning/i.test(line) ? 't-err' : '');
