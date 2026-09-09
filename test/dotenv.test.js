@@ -45,12 +45,25 @@ test('loadDotEnv: absent file is a no-op, real env wins, missing keys applied', 
 });
 
 test('config defaults: public bind, loopback-only proxy trust', () => {
-  const cfg = loadConfig({});
-  assert.equal(cfg.host, '0.0.0.0', 'must be reachable from other machines by default');
-  assert.equal(cfg.trustProxy, 'loopback',
-    'X-Forwarded-For must only be honored from a local proxy, never blindly');
-  assert.ok(cfg.whitelist.includes('127.0.0.1') && cfg.whitelist.includes('::1'));
-  assert.equal(typeof cfg.isAllowedIp, 'function');
+  // hermetic: loadConfig() reads process.env (which <repo>/.env seeded at
+  // import) — a developer running with MGO_HOST/MGO_TRUST_PROXY set must not
+  // flip these assertions.  Force the documented defaults and restore after.
+  const keys = ['MGO_HOST', 'MGO_PORT', 'MGO_TRUST_PROXY', 'MGO_IP_WHITELIST'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) delete process.env[k];
+  try {
+    const cfg = loadConfig({});
+    assert.equal(cfg.host, '0.0.0.0', 'must be reachable from other machines by default');
+    assert.equal(cfg.trustProxy, 'loopback',
+      'X-Forwarded-For must only be honored from a local proxy, never blindly');
+    assert.ok(cfg.whitelist.includes('127.0.0.1') && cfg.whitelist.includes('::1'));
+    assert.equal(typeof cfg.isAllowedIp, 'function');
+  } finally {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
 });
 
 test('findMgoBinary: explicit override wins, sibling ../MGO layout probed', () => {

@@ -37,6 +37,24 @@ const step = async (name, fn) => {
   catch (e) {
     if (e.__skip) { skipN++; console.log(`SKIP  ${name}\n      ${e.message}`); return; }
     failN++; console.log(`FAIL  ${name}\n      ${e.message.split('\n').slice(0, 18).join('\n      ')}`);
+    // 失败现场：截图 + 主页面的点击拦截诊断（弹框未关/inert/遮挡是常见根因）
+    try {
+      await page.screenshot({ path: '/tmp/uitest-fail.png' });
+      const hit = await page.evaluate(() => {
+        const btn = document.querySelector('#submit');
+        const r = btn?.getBoundingClientRect();
+        const el = r ? document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) : null;
+        return JSON.stringify({
+          hit: el ? `${el.tagName}#${el.id}.${String(el.className).slice(0, 40)}` : null,
+          mainInert: document.querySelector('main')?.inert ?? null,
+          modals: [...document.querySelectorAll('.modal')].map((m) => `${m.id}:${m.hidden}`),
+          focused: document.activeElement?.id || document.activeElement?.tagName || null,
+          logJob: document.querySelector('#logJob')?.textContent ?? null,
+          logHead: (document.querySelector('#logBox')?.textContent ?? '').slice(0, 60),
+        });
+      });
+      console.log(`      现场诊断: ${hit}  截图: /tmp/uitest-fail.png`);
+    } catch { /* 诊断失败不影响结果 */ }
   }
 };
 
@@ -65,6 +83,21 @@ const wlRestore = async () => {
 // deployment's allowed root.
 const FIXNAME = 'ui-fsprobe-' + process.pid;
 const ZIPNAME = `ui_res_tree-${process.pid}`;   // /tmp 暂存 zip 同样按运行唯一
+
+/** 新任务绑定：除「不在 before 集合」外还要求 inputName 匹配——在有真实
+ *  并发提交的部署上，纯集合差可能把步骤绑到别人的任务上（后续断言全错）。
+ *  分页窗口取前 50 条足够：新任务排在最前。 */
+async function waitForNewJob(before, inputName, { timeout = 25000 } = {}) {
+  const names = Array.isArray(inputName) ? inputName : [inputName];
+  const t0 = Date.now();
+  for (;;) {
+    const { items } = await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json();
+    const hit = (items ?? []).find((x) => !before.has(x.id) && names.includes(x.inputName));
+    if (hit) return hit.id;
+    if (Date.now() - t0 > timeout) throw new Error(`${timeout}ms 内未出现新任务（inputName=${names.join('|')}）`);
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}
 
 const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
@@ -133,14 +166,10 @@ await step('4 表单输入实时生成 JSON 预览（含 normals=false）', asyn
 /* ---------- 5. submit real conversion through the form ---------- */
 let jobId;
 await step('5 表单上传 TIF → 提交 → 新行出现 → SSE 实时到 succeeded', async () => {
-  const before = new Set(await page.$$eval('#jobs tr[data-id]', (n) => n.map(x => x.dataset.id)));
+  const before = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
   await page.setInputFiles('#file', TIF);
   await page.click('#submit');
-  jobId = await page.waitForFunction((old) => {
-    const tr = [...document.querySelectorAll('#jobs tr[data-id]')]
-      .find(x => !old.includes(x.dataset.id));
-    return tr ? tr.dataset.id : null;
-  }, [...before], { timeout: 15000 }).then(h => h.jsonValue());
+  jobId = await waitForNewJob(before, 'test_terrain.tif');
   await page.waitForFunction(() => /\[status\] succeeded/.test(document.querySelector('#logBox').textContent),
     null, { timeout: 150000 });
   const badgeCls = await page.$eval(`#jobs tr[data-id="${jobId}"] .badge`,
@@ -215,18 +244,14 @@ const OBJ_A = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'test',
 const OBJ_B = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'test', 'fixtures', 'cubeB.obj');
 let multiJobId;
 await step('8b tiles 多文件：统一参数转换 + 合并 tileset（console 上传两个模型）', async () => {
-  const before = new Set(await page.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id)));
+  const before = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
   await page.selectOption('#type', 'tiles');
   await page.waitForSelector('#inputArea input#file[multiple]');
   await page.setInputFiles('#file', [OBJ_A, OBJ_B]);
   await page.waitForFunction(() => /2 个文件/.test(document.querySelector('#dropMeta').textContent),
     null, { timeout: 5000 });
   await page.click('#submit');
-  multiJobId = await page.waitForFunction((old) => {
-    const tr = [...document.querySelectorAll('#jobs tr[data-id]')]
-      .find((x) => !old.includes(x.dataset.id));
-    return tr ? tr.dataset.id : null;
-  }, [...before], { timeout: 15000 }).then((h) => h.jsonValue());
+  multiJobId = await waitForNewJob(before, 'cubeA.obj (+1)');
   await page.waitForFunction(() => /\[status\] succeeded/.test(document.querySelector('#logBox').textContent),
     null, { timeout: 180000 });
   await page.keyboard.press('Escape');
@@ -287,13 +312,9 @@ await step('8c tiles+贴图 ZIP（文件树上传）：贴图与模型同层保�
   await page.waitForFunction((zn) => new RegExp(zn + '\\.zip.*ZIP 文件树').test(document.querySelector('#dropMeta').textContent), ZIPNAME,
     { timeout: 5000 });
   if (await page.$('#modelPaths')) throw new Error('tiles 不应再出现模型路径输入框');
-  const before = new Set(await page.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id)));
+  const before = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
   await page.click('#submit');
-  const zipJobId = await page.waitForFunction((old) => {
-    const tr = [...document.querySelectorAll('#jobs tr[data-id]')]
-      .find((x) => !old.includes(x.dataset.id));
-    return tr ? tr.dataset.id : null;
-  }, [...before], { timeout: 15000 }).then((h) => h.jsonValue());
+  const zipJobId = await waitForNewJob(before, 'g1/cubeA.obj (+1)');
   await page.waitForFunction(() => /\[status\] succeeded/.test(document.querySelector('#logBox').textContent),
     null, { timeout: 180000 });
   await page.keyboard.press('Escape');
@@ -322,13 +343,9 @@ await step('8c tiles+贴图 ZIP（文件树上传）：贴图与模型同层保�
   const ZIP_B = `/tmp/${ZIPNAME}-1.zip`;
   fs.writeFileSync(ZIP_B, zip1);
   await page.setInputFiles('#file', ZIP_B);
-  const before2 = new Set(await page.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id)));
+  const before2 = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
   await page.click('#submit');
-  const autoId = await page.waitForFunction((old) => {
-    const tr = [...document.querySelectorAll('#jobs tr[data-id]')]
-      .find((x) => !old.includes(x.dataset.id));
-    return tr ? tr.dataset.id : null;
-  }, [...before2], { timeout: 15000 }).then((h) => h.jsonValue());
+  const autoId = await waitForNewJob(before2, 'only/cubeA.obj');
   await page.waitForFunction(() => /\[status\] succeeded/.test(document.querySelector('#logBox').textContent),
     null, { timeout: 180000 });
   await page.keyboard.press('Escape');
@@ -586,6 +603,14 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
 
   /* ---------- 24. free online base imagery ---------- */
   await step('24 免费在线底图：切换源 + 瓦片请求 + 归属标注 + 关闭', async () => {
+    // 内网/防火墙环境公开瓦片源不可达 → 固定等待后必假失败；先探一次可达性
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 4000);
+      const probe = await fetch('https://basemaps.cartocdn.com/dark_all/0/0/0.png', { signal: ctl.signal });
+      clearTimeout(t);
+      if (!probe.ok) skip(`公开底图源不可达（HTTP ${probe.status}），跳过外网瓦片断言`);
+    } catch { skip('无外网（公开底图源不可达），跳过外网瓦片断言'); }
     let bp;
     try {
     bp = await newPage('/viewer.html?asset=' + encodeURIComponent('/ws/' + jobId + '/out') + '&type=terrain&basemap=none');
@@ -699,12 +724,7 @@ await step('26 FilePicker：模式切换 + 跨目录多选/过滤/面包屑 + �
   // 提交（原地路径，逗号分隔→inputPaths）→ 成功且合并 2 children
   const before26 = new Set((await (await fetch(BASE + '/api/v1/jobs?limit=50')).json()).items.map((x) => x.id));
   await page.click('#submit');
-  let id = null;
-  for (let i3 = 0; i3 < 20 && !id; i3++) {
-    await page.waitForTimeout(1000);
-    const list = (await (await fetch(BASE + '/api/v1/jobs?limit=50')).json()).items;
-    id = (list.find((x) => !before26.has(x.id)) ?? {}).id ?? null;
-  }
+  const id = await waitForNewJob(before26, ['cubeA.obj (+1)', 'cubeB.obj (+1)']);
   if (!id) throw new Error('提交后未见新任务');
   let st = '';
   for (let i2 = 0; i2 < 60; i2++) {
@@ -825,12 +845,7 @@ await step('26b 路径模式投影：浏览选 .prj → proj.prjPath 进 argv；
   // 正式提交 → 真实引擎成功 + 服务端 params/argv 均带投影文件
   const before27 = new Set((await (await fetch(BASE + '/api/v1/jobs?limit=50')).json()).items.map((x) => x.id));
   await page.click('#submit');
-  let id = null;
-  for (let i3 = 0; i3 < 25 && !id; i3++) {
-    await page.waitForTimeout(1000);
-    const list = (await (await fetch(BASE + '/api/v1/jobs?limit=50')).json()).items;
-    id = (list.find((x) => !before27.has(x.id)) ?? {}).id ?? null;
-  }
+  const id = await waitForNewJob(before27, 'cubeA.obj');
   if (!id) throw new Error('投影路径任务未提交，#msg=' + await page.textContent('#msg'));
   let st = ''; let full = null;
   for (let i2 = 0; i2 < 90; i2++) {

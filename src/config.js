@@ -113,8 +113,8 @@ export function loadConfig(overrides = {}) {
     jobTimeoutS: envInt('MGO_JOB_TIMEOUT_S', 4 * 3600),
     ttlDays: envInt('MGO_TTL_DAYS', 7),
     allowLocalPath: envBool('MGO_ALLOW_LOCAL_PATH', false),
-    allowedRoots: String(env('MGO_ALLOWED_ROOTS', ''))
-      .split(path.delimiter).filter(Boolean).map((p) => path.resolve(p)),
+    allowedRoots: [...new Set(String(env('MGO_ALLOWED_ROOTS', ''))
+      .split(path.delimiter).filter(Boolean).map((p) => path.resolve(p)))],
     publicDir: path.join(PKG_ROOT, 'public'),
     cesiumLocalEntry: path.join(PKG_ROOT, 'public', 'cesium', 'Cesium.js'),
     logLevel: env('MGO_LOG_LEVEL', 'info'),

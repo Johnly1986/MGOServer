@@ -677,8 +677,12 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         res.write(`id: ${e.seq}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
       } catch { cleanup(); }
     };
+    // NOTE: do NOT cleanup on res 'close' — on a hijacked connection Node
+    // fires ServerResponse 'close' right after the headers go out (observed:
+    // replay delivered, then every live event silently dropped).  The request
+    // stream's own 'close' is the reliable client-gone signal, and real socket
+    // errors arrive via res 'error'.
     res.on('error', cleanup);
-    res.on('close', cleanup);
     req.raw.on('close', cleanup);
     manager.on('event', onEvent);
     send({ seq: 0, ts: new Date().toISOString(), type: 'hello',
