@@ -531,33 +531,32 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     const { total } = await (await fetch(BASE + '/api/v1/jobs?limit=1')).json();
     if (total < 21) skip(`任务总数 ${total} < 21，不足以验证分页`);
     const rows = () => consolePage.$$eval('#jobs tr[data-id]', (n) => n.map((x) => x.dataset.id));
+    const wf = (label, fn, arg) => consolePage.waitForFunction(fn, arg, { timeout: 15000 })
+      .catch((e) => { throw new Error(`18b/${label}: ${e.message.split('\n')[0]}`); });
     await consolePage.selectOption('#pageSizeSel', '10');
-    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length === 10,
-      null, { timeout: 15000 });
+    await wf('W1 rows=10', () => document.querySelectorAll('#jobs tr[data-id]').length === 10);
     if (!new RegExp(`共 ${total} 条`).test(await consolePage.textContent('#pager')))
       throw new Error('分页条缺总数：' + (await consolePage.textContent('#pager')).trim());
     const p1 = await rows();
     await consolePage.click('#pager [data-page="2"]');
-    await consolePage.waitForFunction((old) => {
+    await wf('W2 p2 all-new', (old) => {
       const now = [...document.querySelectorAll('#jobs tr[data-id]')].map((x) => x.dataset.id);
       return now.length === 10 && !now.some((id) => old.includes(id));
-    }, p1, { timeout: 15000 });
+    }, p1);
     if ((await rows()).some((id) => p1.includes(id))) throw new Error('第 2 页与第 1 页内容重叠');
     if (!(await consolePage.$eval('#pager [data-page="2"]', (n) => n.classList.contains('on'))))
       throw new Error('当前页码未高亮');
     await consolePage.selectOption('#pageSizeSel', '20');   // 换每页条数应回到第 1 页
-    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length === 20
-      && document.querySelector('#pager [data-page="1"].on'), null, { timeout: 15000 });
+    await wf('W3 rows=20 on p1', () => document.querySelectorAll('#jobs tr[data-id]').length === 20
+      && document.querySelector('#pager [data-page="1"].on'));
     await consolePage.click('#pager [title="末页"]');        // 末页只装得下剩下的尾巴
-    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length < 20,
-      null, { timeout: 15000 });
+    await wf('W4 last<20', () => document.querySelectorAll('#jobs tr[data-id]').length < 20);
     if (!(await consolePage.$eval('#pager [title="下一页"]', (n) => n.disabled)))
       throw new Error('末页的"下一页"未禁用');
     if ((await rows()).length + (Math.ceil(total / 20) - 1) * 20 !== total)
       throw new Error('末页行数与总数不自洽');
     await consolePage.selectOption('#pageSizeSel', '10');   // 复原：后续步骤按默认页大小断言
-    await consolePage.waitForFunction(() => document.querySelectorAll('#jobs tr[data-id]').length === 10,
-      null, { timeout: 15000 });
+    await wf('W5 back to 10', () => document.querySelectorAll('#jobs tr[data-id]').length === 10);
   });
   await step('19 状态徽章为中文文案 + 状态类', async () => {
     const txt = await consolePage.$eval('#jobs tr .badge', (n) => n.textContent);

@@ -65,6 +65,11 @@ export class ProgressParser {
   snapshot() { return { ...this.last }; }
 }
 
+// 已知边界：ImageTiler 逐层重启计数（每个 level 0..100），跨层时 job.progress
+// 的 percent 会回落（L1 100% → L2 2%）。有意不钳制：clamp 成非递减会让进度条
+// 卡在 100% 直到跑完（更误导），而引擎只在结束时输出总层数，无法做跨层累加。
+// UI 侧以 phase='levels' 语义展示；若未来引擎输出层号，再在此做跨层归一。
+
 /** Does this stdout/stderr line carry module diagnostics worth streaming? */
 export function isModuleLine(line) {
   return RE_MODULE_LINE.test(line);

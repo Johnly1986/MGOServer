@@ -161,6 +161,17 @@ test('IP whitelist: spoofed client IP rejected, localhost allowed', skip, async 
   assert.equal(page.status, 200);
 });
 
+test('403 page HTML-escapes the client IP (spoofed XFF reflection)', skip, async () => {
+  const evil = '<script>alert(1)</script>';
+  const r = await fetch(base + '/console.html', {
+    headers: { 'X-Forwarded-For': evil },
+  });
+  assert.equal(r.status, 403);
+  const body = await r.text();
+  assert.ok(!body.includes('<script>alert(1)'), 'raw HTML from the spoofed header must not reach the page');
+  assert.ok(body.includes('&lt;script&gt;'), 'the reflected value must be escaped');
+});
+
 test('whitelist management is localhost-only and persists additions', skip, async () => {
   // spoofed client cannot read or change the whitelist
   const blocked = await fetch(base + '/api/v1/whitelist',

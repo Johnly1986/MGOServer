@@ -1620,7 +1620,14 @@ $('#logMask').onclick = closeLog;                 // 点遮罩关闭
 /* fsModal 接线 */
 $('#fsMask').onclick = fsClose;
 $('#fsCloseBtn').onclick = fsClose;
-$('#fsUseDir').onclick = () => { if (fsState.cwd) fsWrite([fsState.cwd], true); };
+$('#fsUseDir').onclick = () => {
+  if (!fsState.cwd) return;
+  const had = String(fsState.input?.value || '').split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+  fsWrite([fsState.cwd], true);
+  // 多选模式下此按钮整目录替换路径框——旧版静默丢弃已加入的文件选择
+  if (fsState.multi && had.length && !(had.length === 1 && had[0] === fsState.cwd))
+    toast(`已选当前文件夹（替换原有 ${had.length} 项）`, 'info', 3200);
+};
 $('#fsConfirm').onclick = () => {                    // 加入选中：回填后弹框保持打开，可跨目录续选
   const n = fsState.sel.length; if (!n) return;
   fsWrite(fsState.sel.slice(), false, false);

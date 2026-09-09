@@ -12,6 +12,9 @@ import { registerDataPlane } from './api/data-plane.js';
 
 /** Minimal dark-themed 403 page for browsers (non-whitelisted client IP). */
 function forbiddenPage(ip) {
+  // ip 未经 isIP 校验：trustProxy 场景下来自转发头，直接内插进 HTML 是反射面
+  const safeIp = String(ip).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>403 禁止访问</title>
 <style>
@@ -26,7 +29,7 @@ function forbiddenPage(ip) {
   code{font:12px ui-monospace,Consolas,monospace;color:#7cc0ff}
 </style></head><body><div class="card">
   <h1><span class="code">403</span> · 访问被拒绝</h1>
-  <p>您的 IP <span class="ip">${ip}</span> 不在服务白名单中，页面与接口均已拦截。</p>
+  <p>您的 IP <span class="ip">${safeIp}</span> 不在服务白名单中，页面与接口均已拦截。</p>
   <p>如需授权：请在服务器本机打开 <code>/whitelist.html</code> 白名单设置页，添加该 IP 后保存，立即生效。</p>
   <div class="hint">MGO 服务 · IP 白名单访问控制</div>
 </div></body></html>`;
