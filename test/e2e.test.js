@@ -607,7 +607,16 @@ test('cancel a running job', skip, async () => {
   try {
     const r = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: path.join(tmp, 'dem.tif') });
     const id = r.json.id;
-    await new Promise((res) => setTimeout(res, 300));
+    // wait until the job is actually running instead of a fixed sleep — this
+    // cancel targets the tree-kill path (a queued/pre-spawn cancel is honored
+    // by the spawn short-circuit, a different code path)
+    let st = '';
+    for (let i = 0; i < 200 && st !== 'running'; i++) {
+      st = (await api('GET', `/api/v1/jobs/${id}`)).json.status;
+      if (['succeeded', 'failed', 'canceled', 'usage_error'].includes(st)) break;
+      await new Promise((res) => setTimeout(res, 20));
+    }
+    assert.equal(st, 'running', `job should be running before cancel, got ${st}`);
     const c = await api('POST', `/api/v1/jobs/${id}/cancel`);
     assert.equal(c.status, 200);
     const done = await waitTerminal(id, 8000);

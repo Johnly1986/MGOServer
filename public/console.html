@@ -505,7 +505,7 @@ const ipNote = () => {
   const { ip, allowed } = caps.client;
   n.innerHTML = allowed
     ? `🟢 IP <b>${esc(ip)}</b> `
-    : `🔴 IP <b>${esc(ip)}</b> 功能☝️`;
+    : `🔴 IP <b>${esc(ip)}</b> 未在白名单，提交会被拒绝（可在白名单页添加）`;
 };
 const showMsg = (text, kind) => {
   const m = $('#msg');
@@ -875,7 +875,9 @@ function openFsBrowser(type, inputEl, opts = {}) {
   $('#fsOnlyOk').checked = true;
   $('#fsOnlyWrap').hidden = !fsState.exts.length;
   $('#fsTitle').textContent = opts.title || '🖥 选择服务器文件';
+  fsState.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   $('#fsModal').hidden = false;
+  toggleModalChrome(true, $('#fsModal'));
   $('#fsDialog').focus();
   // 初始定位：目标输入框已有路径时先进它的所在目录（失败静默回落根列表）
   const cur = String(inputEl?.value || '').split(',').map((s) => s.trim()).filter(Boolean).pop() || '';
@@ -883,7 +885,12 @@ function openFsBrowser(type, inputEl, opts = {}) {
   if (opts.start || dir0) fsLoad(opts.start || dir0, { quiet: true });
   else fsLoad('');
 }
-function fsClose() { $('#fsModal').hidden = true; }
+function fsClose() {
+  $('#fsModal').hidden = true;
+  toggleModalChrome(false, $('#fsModal'));   // 解锁滚动 + 恢复背景可交互
+  fsState.returnFocus?.focus?.();            // 焦点回到打开浏览器的按钮
+  fsState.returnFocus = null;
+}
 function fsJoin(base, name) {
   const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/';
   return base.replace(/[\\/]+$/, '') + sep + name;
@@ -935,7 +942,7 @@ function fsRender() {
   const dirUsed = inDir && fsState.multi && fsState.input?.value
     && String(fsState.input.value).split(/[,\n]/).map((s) => s.trim()).includes(d.cwd);
   $('#fsUseDir').disabled = Boolean(dirUsed);
-  $('#fsUseDir').title = dirUsed ? '当前目录已在已选路径中，如需重选请先移除' : '';
+  $('#fsUseDir').title = dirUsed ? '当前目录已填入路径框，如需重选请先清空或修改路径框' : '';
 
   // ---- 面包屑：最长匹配根 + 可点分段（当前段置灰样式） ----
   if (inDir && (d.roots ?? []).length) {
@@ -990,7 +997,7 @@ function fsRender() {
       const full = fsJoin(d.cwd, f.name);
       const u = used?.has(full);
       list.append(el('button', { class: 'fsItem' + (u ? ' used' : fsState.sel.includes(full) ? ' sel' : ''),
-        disabled: ok && !u ? null : '', title: u ? full + '（已选，如需重选请先在「已选路径」中移除）' : full,
+        disabled: ok && !u ? null : '', title: u ? full + '（已填入路径框，如需重选请先在输入框中删除）' : full,
         onclick: () => fsSel(full) },
       '📄 ' + f.name, el('span', { class: 'sz' }, u ? '已选' : fmtKB(f.size))));
     }
@@ -1013,7 +1020,8 @@ function fsRender() {
   $('#fsHint').textContent = fsState.multi
     ? (fsState.sel.length ? `已选 ${fsState.sel.length} 个（跨目录保留）` : '可点选多个文件，再「加入选中」')
       + (usedN ? ` · 路径框已含 ${usedN} 项（列表中置灰不可重复选）` : '')
-    : (fsState.exts.length ? '点击文件即选中' : '');
+    : (fsState.exts.length ? '点击文件即选中'
+      : (fsState.allowDir ? '该输入只接受文件夹——进入目标目录后点「📂 选择当前文件夹」' : ''));
 }
 function fsSel(full) {
   if (fsState.multi) {
@@ -1508,7 +1516,7 @@ const logTrigger = (id) => {
   try { return document.querySelector(`#jobs tr[data-id="${CSS.escape(id)}"] button[data-act="log"]`); }
   catch { return null; }
 };
-function toggleModalChrome(on) {
+function toggleModalChrome(on, modal = logModal) {
   const b = document.body;
   if (on) {
     const gap = window.innerWidth - document.documentElement.clientWidth;   // 先量滚动条宽度再锁
@@ -1518,8 +1526,12 @@ function toggleModalChrome(on) {
     b.classList.remove('locked');
     b.style.paddingRight = '';
   }
-  // 背景整体 inert：不进 Tab 序、读屏也不播（不支持该属性的浏览器忽略即可，焦点圈仍由 keydown 兜住）
-  for (const n of b.children) if (n.tagName !== 'SCRIPT' && n !== logModal && n.id !== 'toasts' && n.id !== 'fsModal') n.inert = on;
+  // 背景整体 inert：不进 Tab 序、读屏也不播（不支持该属性的浏览器忽略即可，焦点圈仍由 keydown 兜住）。
+  // modal 参数化：日志弹框与目录浏览弹框共用同一套锁滚/遮罩语义。
+  for (const n of b.children) {
+    if (n.tagName === 'SCRIPT' || n === modal || n.id === 'toasts') continue;
+    n.inert = on;
+  }
 }
 
 async function openLog(id) {
@@ -1630,6 +1642,18 @@ logDialog.addEventListener('keydown', (e) => {    // Tab 焦点圈在弹框里�
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
+{   // 目录浏览弹框同款 Tab 焦点圈
+  const dlg = $('#fsDialog');
+  dlg.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const f = [...dlg.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((n) => !n.disabled && n.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+}
 const scroll = () => { const b = $('#logBox'); b.scrollTop = b.scrollHeight; };
 
 /* ================ submit ================ */
