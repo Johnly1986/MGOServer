@@ -13,16 +13,20 @@ import { pipeline } from 'node:stream/promises';
  *    as a literal segment and rejected via the empty/.. check after the
  *    backslash normalisation);
  *  - maxEntries: hard cap on the number of file entries;
- *  - maxTotalBytes: cap on the total *uncompressed* size (zip-bomb guard).
+ *  - maxTotalBytes: cap on the total *uncompressed* size (zip-bomb guard);
+ *  - reservedRootNames: reject root-level entries whose name is reserved for
+ *    service-staged side-cars (otherwise a zip entry could silently overwrite
+ *    the staged _projection.prj / _controlpoints.csv / _config.csv).
  *
  * @param {Buffer} buf
  * @param {string} destDir
- * @param {{maxEntries?:number, maxTotalBytes?:number}} [limits]
+ * @param {{maxEntries?:number, maxTotalBytes?:number, reservedRootNames?:Set<string>}} [limits]
  * @returns {Promise<{files:number, bytes:number, dirs:number}>}
  */
 export async function extractZip(buf, destDir, {
   maxEntries = 50000,
   maxTotalBytes = 8 * 1024 ** 3,
+  reservedRootNames = null,
 } = {}) {
   const zipfile = await fromBufferPromise(buf, { lazyEntries: true });
   let files = 0;
@@ -70,6 +74,13 @@ export async function extractZip(buf, destDir, {
       const parts = name.split('/');
       if (name.startsWith('/') || parts.some((s) => !s || s === '.' || s === '..')) {
         throw Object.assign(new Error(`unsafe zip entry path: ${entry.fileName}`), { code: 'ZIP_PATH' });
+      }
+      // a root-level entry sharing a side-car staging name would overwrite the
+      // staged projection / control-points / mesh-config file silently
+      if (reservedRootNames && parts.length === 1 && reservedRootNames.has(parts[0].toLowerCase())) {
+        throw Object.assign(
+          new Error(`zip entry "${name}" uses a name reserved for service side-cars — rename it inside the archive`),
+          { code: 'ZIP_RESERVED' });
       }
       bytes += entry.uncompressedSize;
       if (bytes > maxTotalBytes) {

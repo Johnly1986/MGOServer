@@ -399,14 +399,14 @@ ZIP / 整个文件夹，OSGB 与 tiles/mesh 同组件，走 relPaths 或 ZIP 树
 ```jsonc
 // simplify —— 映射 mgo 通用简化参数（README "Mesh Simplification"）
 { "simplify": { "error": 0.01, "normalWeight": 0.1, "threshold": 0.1,
-                "lockBorder": true, "localError": false } }
+                "lockBorder": true, "localError": false } }   // localError 仅 mesh（schema 按类型收紧）
 
 // georef —— 映射 --georef/--7p/--cps/--fit-order/--auto-crs/--offset
 { "georef": { "mode": "7param",                       // 7param | multipos | anchor
               "sevenParameter": [0,0,0,0,0,0,0],       // m(米) r(角秒) s(ppm)
               "controlPointsCsv": "sx,sy,sz,tx,ty,tz\n…",  // 或上传 cp.csv 文件
               "fitOrder": 1, "autoCrs": false,
-              "offset": [0,0,0] } }
+              "offset": [0,0,0] } }        // offset 仅 mesh（schema 按类型收紧）
 
 // proj —— 映射 --prj：三选一，优先级 上传附件 > prjPath > crs
 { "proj": { "crs": "EPSG:4547" } }            // 内联 EPSG/WKT/+proj
@@ -732,7 +732,7 @@ CMD ["node", "src/server.js"]
 | `georef.controlPointsCsv` / cp 上传件 | `--cps` | multipos | 表头 `sx,sy,sz,tx,ty,tz` |
 | `georef.fitOrder` | `--fit-order` | multipos | 1/2/3 |
 | `georef.autoCrs` | `--auto-crs` | multipos | bool |
-| `georef.offset` | `--offset` | mesh/几何类 | 3 元数组 |
+| `georef.offset` | `--offset` | mesh | 3 元数组（schema 仅 mesh 接受，其余类型 422） |
 | `simplify.error/normalWeight/threshold` | `--error/--nweight/--threshold`（tiles/terrain/osgb）、`-e/-n/-t`（mesh） | 几何类 | 数值区间；留空=源码默认（tiles/osgb 默认不简化 error=0；terrain 默认 0.001 归一化） |
 | `simplify.lockBorder` | `--lock-border` 开关（tiles/terrain/osgb）；**mesh 为带值布尔 `-L true\|false` 且 CLI 默认开** | 几何类 | bool |
 | `simplify.localError` | `-l <bool>`（mesh 带值布尔，仅 mesh） | mesh | bool |
@@ -741,7 +741,7 @@ CMD ["node", "src/server.js"]
 | `outputFormat` | （`-o` 扩展名） | mesh | 白名单 obj/glb/fbx |
 | `sourceCrs` / `targetCrs` / `pretty` | `--source-crs/--target-crs/--pretty` | geojson | CRS 语法 |
 | `configCsv` | `-c` | mesh | 上传件 |
-| `verbose` | `-v` | terrain/osgb | 服务默认开启（日志需要） |
+| `verbose` | `-v` | terrain/osgb | 非 API 参数（schema 不接受）：服务恒开启，进度解析依赖引擎输出 |
 
 > 校验原则：**所有参数在 API 层完成 zod 校验，正常情况下不允许 exit 2（usage_error）到达子进程**；exit 2 一律视为映射表 bug，触发服务端告警（§5.4）。
 

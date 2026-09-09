@@ -17,6 +17,9 @@ export const projSchema = z.object({
   message: 'proj requires exactly one of crs | prjPath',
 });
 
+// georef —— shared by tiles/terrain/osgb; mesh extends it with --offset.
+// Strict: junk inside georef used to be silently stripped (inconsistent with
+// the repo's validate-don't-drop philosophy).
 export const georefSchema = z.object({
   mode: z.enum(['7param', 'multipos', 'anchor']).optional(),
   sevenParameter: z.array(num).length(7).optional(),
@@ -24,18 +27,19 @@ export const georefSchema = z.object({
   controlPointsPath: z.string().min(1).optional(),  // server-side CSV path
   fitOrder: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
   autoCrs: z.boolean().optional(),
-  offset: vec3.optional(),                          // --offset, mesh only
-});
+}).strict();
+// --offset exists only on the mesh CLI; accepting it for tiles/terrain/osgb
+// validated params the engine would never see (silently dropped in argv).
+export const meshGeorefSchema = georefSchema.extend({ offset: vec3.optional() });
 
 export const simplifySchema = z.object({
   error: num.min(0).optional(),
   normalWeight: num.min(0).max(1).optional(),
   threshold: num.min(0).optional(),
   lockBorder: z.boolean().optional(),
-  localError: z.boolean().optional(),               // -l, mesh only
 }).strict();
-
-const base = { verbose: z.boolean().optional() };
+// -l/--localerror is mesh-only (CLI verified: tiles/terrain/osgb lack the flag)
+export const meshSimplifySchema = simplifySchema.extend({ localError: z.boolean().optional() });
 
 export const tilesSchema = z.object({
   type: z.literal('tiles'),
@@ -49,7 +53,6 @@ export const tilesSchema = z.object({
   proj: projSchema.optional(),
   georef: georefSchema.optional(),
   simplify: simplifySchema.optional(),
-  ...base,
 }).strict();
 
 export const terrainSchema = z.object({
@@ -63,7 +66,6 @@ export const terrainSchema = z.object({
   proj: projSchema.optional(),
   georef: georefSchema.optional(),
   simplify: simplifySchema.optional(),
-  ...base,
 }).strict();
 
 export const imageSchema = z.object({
@@ -86,9 +88,8 @@ export const meshSchema = z.object({
   rebuild: z.boolean().optional(),                  // -R (rebuild/clean scene, on/off)
   configCsvPath: z.string().min(1).optional(),      // -c (server path)
   proj: projSchema.optional(),
-  georef: georefSchema.optional(),
-  simplify: simplifySchema.optional(),
-  ...base,
+  georef: meshGeorefSchema.optional(),
+  simplify: meshSimplifySchema.optional(),
 }).strict();
 
 export const osgbSchema = z.object({
@@ -99,7 +100,6 @@ export const osgbSchema = z.object({
   proj: projSchema.optional(),
   georef: georefSchema.optional(),
   simplify: simplifySchema.optional(),
-  ...base,
 }).strict();
 
 export const jobSchema = z.discriminatedUnion('type', [

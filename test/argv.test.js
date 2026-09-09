@@ -173,3 +173,16 @@ test('schema rejects unknown keys, bad georef and even samplesPerTile', () => {
   assert.equal(jobSchema.safeParse({ type: 'mesh', reorder: 0.5 }).success, false);
   assert.equal(jobSchema.safeParse({ type: 'mesh', reorder: true }).success, true);
 });
+
+test('schema: offset/localError are mesh-only, verbose is not an API param', () => {
+  // --offset and -l exist only on the mesh CLI (verified against MGOConsole -h);
+  // accepting them for tiles/terrain/osgb validated params that argv silently
+  // dropped. verbose is service plumbing (terrain/osgb always pass -v for the
+  // progress parser), never a user-settable param.
+  assert.equal(jobSchema.safeParse({ type: 'tiles', georef: { offset: [1, 2, 3] } }).success, false);
+  assert.equal(jobSchema.safeParse({ type: 'terrain', simplify: { localError: true } }).success, false);
+  assert.equal(jobSchema.safeParse({ type: 'mesh', georef: { offset: [1, 2, 3] } }).success, true);
+  assert.equal(jobSchema.safeParse({ type: 'mesh', simplify: { localError: true } }).success, true);
+  assert.equal(jobSchema.safeParse({ type: 'terrain', verbose: true }).success, false);
+  assert.equal(jobSchema.safeParse({ type: 'mesh', verbose: false }).success, false);
+});

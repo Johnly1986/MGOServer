@@ -1167,3 +1167,148 @@ test('QUEUE_FULL after a multipart upload leaves no orphan under workspace/tmp',
     for (const id of ids) await fetch(base + `/api/v1/jobs/${id}/cancel`, { method: 'POST' }).catch(() => {});
   }
 });
+
+test('reserved side-car names are rejected for user content (no silent overwrite)', skip, async () => {
+  // Regression: all three upload channels write user content into the staged
+  // dir AFTER the side-cars (_projection.prj / _controlpoints.csv / _config.csv)
+  // are staged there — a user file with such a name silently overwrote the
+  // side-car and the converter consumed the wrong data.
+  // 1) flat upload: model named _projection.prj + a real prj side-car
+  let fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob(['FBX']), '_projection.prj');
+  fd.append('prj', new Blob(['PROJDATA'], { type: 'text/plain' }), 'real.prj');
+  let r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  let b = await r.json();
+  assert.equal(r.status, 422, JSON.stringify(b));
+  assert.equal(b.error.code, 'RESERVED_NAME', JSON.stringify(b));
+  // 2) relPaths tree with a root-level reserved entry
+  fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles', relPaths: ['_projection.prj', 'site/tex.png'] }));
+  fd.append('file', new Blob(['P']), 'f_000001');
+  fd.append('file', new Blob(['T']), 'f_000002');
+  r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  b = await r.json();
+  assert.equal(r.status, 422, JSON.stringify(b));
+  assert.equal(b.error.code, 'RESERVED_NAME');
+  // 3) zip with a root-level reserved entry
+  const zip = await makeZip([['_projection.prj', 'EVIL'], ['site/root.fbx', 'FBX']]);
+  fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob([zip], { type: 'application/zip' }), 'tree.zip');
+  r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  b = await r.json();
+  assert.equal(r.status, 422, JSON.stringify(b));
+  assert.equal(b.error.code, 'RESERVED_NAME');
+  // 4) nested paths are fine — only the staged-dir root level is shared
+  fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles', relPaths: ['site/_projection.prj', 'site/root.fbx'] }));
+  fd.append('file', new Blob(['P']), 'f_000001');
+  fd.append('file', new Blob(['F']), 'f_000002');
+  r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  b = await r.json();
+  assert.equal(r.status, 201, JSON.stringify(b));
+  const done = await waitTerminal(b.id, 15000);
+  assert.ok(['succeeded', 'failed'].includes(done.status), 'job ran (no reserved-name rejection)');
+});
+
+/* ---- manager outcome branches with no prior coverage ---- */
+
+test('exit code 2 → usage_error (service argv mapping surfaced loudly)', skip, async () => {
+  process.env.FAKE_EXIT = '2';
+  try {
+    const r = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: path.join(tmp, 'dem.tif') });
+    const done = await waitTerminal(r.json.id);
+    assert.equal(done.status, 'usage_error');
+    assert.equal(done.error.code, 'USAGE_ERROR');
+    assert.match(done.error.message, /rejected the arguments/);
+  } finally { delete process.env.FAKE_EXIT; }
+});
+
+test('job timeout → canceled with TIMEOUT error', skip, async () => {
+  const appT = await buildApp(loadConfig({
+    binary: FAKE, workspaceRoot: path.join(tmp, 'wsTimeout'), maxConcurrentJobs: 1,
+    queueMax: 5, minFreeGb: 0, ttlDays: 7, jobTimeoutS: 2,
+    allowLocalPath: true, allowedRoots: [tmp], logLevel: 'silent',
+  }));
+  await appT.listen({ host: '127.0.0.1', port: 0 });
+  const bT = `http://127.0.0.1:${appT.server.address().port}`;
+  process.env.FAKE_STALL = '10';
+  try {
+    const fd = new FormData();
+    fd.append('options', JSON.stringify({ type: 'terrain' }));
+    fd.append('file', new Blob(['T']), 't.tif');
+    const r = await fetch(bT + '/api/v1/jobs', { method: 'POST', body: fd });
+    const j = await r.json();
+    const done = await waitTerminal(j.id, 15000, bT);
+    assert.equal(done.status, 'canceled');
+    assert.equal(done.error?.code, 'TIMEOUT');
+  } finally {
+    delete process.env.FAKE_STALL;
+    await appT.close();
+  }
+});
+
+test('exit 0 without output → NO_ARTIFACTS; missing binary → SPAWN failure', skip, async () => {
+  const silent = path.join(tmp, 'silent-mgo.sh');
+  await fsp.writeFile(silent, '#!/usr/bin/env bash\nexit 0\n');
+  await fsp.chmod(silent, 0o755);
+  const mk = (binary, ws) => buildApp(loadConfig({
+    binary, workspaceRoot: path.join(tmp, ws), maxConcurrentJobs: 1, queueMax: 5,
+    minFreeGb: 0, ttlDays: 7, jobTimeoutS: 30, allowLocalPath: false,
+    allowedRoots: [tmp], logLevel: 'silent',
+  }));
+  const aNo = await mk(silent, 'wsNoArt');
+  const aSp = await mk(path.join(tmp, 'no-such-binary'), 'wsSpawn');
+  await aNo.listen({ host: '127.0.0.1', port: 0 });
+  await aSp.listen({ host: '127.0.0.1', port: 0 });
+  try {
+    const post = (bT) => {
+      const fd = new FormData();
+      fd.append('options', JSON.stringify({ type: 'terrain' }));
+      fd.append('file', new Blob(['T']), 't.tif');
+      return fetch(bT + '/api/v1/jobs', { method: 'POST', body: fd });
+    };
+    const bNo = `http://127.0.0.1:${aNo.server.address().port}`;
+    const bSp = `http://127.0.0.1:${aSp.server.address().port}`;
+    const d1 = await waitTerminal((await (await post(bNo)).json()).id, 15000, bNo);
+    assert.equal(d1.status, 'failed');
+    assert.equal(d1.error.code, 'NO_ARTIFACTS');
+    const d2 = await waitTerminal((await (await post(bSp)).json()).id, 15000, bSp);
+    assert.equal(d2.status, 'failed');
+    assert.equal(d2.error.code, 'SPAWN');
+    assert.match(d2.error.message, /cannot launch mgo binary/);
+  } finally {
+    await aNo.close();
+    await aSp.close();
+  }
+});
+
+test('side-car attachments are type-gated (prj/cps/cfg)', skip, async () => {
+  // The CLI never reads these flags for the excluded types; accepting the
+  // upload used to silently drop it while the job reported success.
+  const expectReject = async (type, field, filename, content) => {
+    const fd = new FormData();
+    fd.append('options', JSON.stringify({ type }));
+    fd.append('file', new Blob(['X']), type === 'geojson' ? 'a.geojson' : 'a.tif');
+    fd.append(field, new Blob([content]), filename);
+    const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+    const b = await r.json().catch(() => null);
+    assert.equal(r.status, 422, `${type}+${field}: ${JSON.stringify(b)}`);
+    assert.equal(b?.error?.code, 'SIDE_CAR_UNSUPPORTED', JSON.stringify(b));
+  };
+  await expectReject('geojson', 'prj', 'a.prj', 'PROJ');
+  await expectReject('image', 'cps', 'p.csv', 'sx,sy');
+  await expectReject('tiles', 'cfg', 'c.csv', 'name,err');
+  // supported combos still pass validation (and run to completion with the fake)
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'terrain' }));
+  fd.append('file', new Blob(['T']), 't.tif');
+  fd.append('prj', new Blob(['PROJDATA']), 'a.prj');
+  fd.append('cps', new Blob(['sx,sy,sz,tx,ty,tz\n1,2,3,4,5,6']), 'p.csv');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const b = await r.json().catch(() => null);
+  assert.equal(r.status, 201, JSON.stringify(b));
+  const done = await waitTerminal(b.id, 15000);
+  assert.ok(['succeeded', 'failed'].includes(done.status));
+});

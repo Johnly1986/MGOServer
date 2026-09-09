@@ -13,6 +13,25 @@ function err(status, code, message, details) {
   return Object.assign(new Error(message), { statusCode: status, errCode: code, details });
 }
 
+/** Staged side-car names (uploaded prj / control-points / mesh config land in
+ *  the job input dir under these names, which argv then feeds the engine).
+ *  User content must never use them: all three upload channels (flat rename,
+ *  relPaths tree, ZIP extract) write AFTER the side-cars are staged, so a
+ *  user file with one of these names would silently overwrite the side-car
+ *  and the converter would consume the wrong data. */
+const RESERVED_STAGING = new Set([
+  '_projection.prj', '_projection.wkt', '_projection.proj',
+  '_controlpoints.csv', '_config.csv',
+]);
+
+function assertNotReserved(name) {
+  if (RESERVED_STAGING.has(String(name).toLowerCase())) {
+    throw err(422, 'RESERVED_NAME',
+      `"${name}" is reserved for uploaded side-car files (projection / control points / mesh config) — rename the file and retry`,
+      { reserved: [...RESERVED_STAGING] });
+  }
+}
+
 function validateInput(type, { name, kind }) {
   if (!JOB_TYPES.includes(type)) {
     throw err(422, 'BAD_TYPE', `unknown job type "${type}"`, { expected: JOB_TYPES });
@@ -352,6 +371,26 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         if (!options || typeof options !== 'object' || Array.isArray(options)) {
           throw err(422, 'BAD_OPTIONS', 'options must be a JSON object');
         }
+        // attachment ↔ type compatibility: the CLI never reads these flags for
+        // the excluded types, so accepting the upload would silently drop it
+        // (the file would sit in input/ unused while the job reports success)
+        const SIDE_CAR_FOR = {
+          prj: ['tiles', 'terrain', 'image', 'mesh', 'osgb'],
+          cps: ['tiles', 'terrain', 'mesh', 'osgb'],
+          cfg: ['mesh'],
+        };
+        const SIDE_CAR_HINT = {
+          prj: 'geojson has no projection input — pass sourceCrs/targetCrs instead',
+          cps: 'control points need a georef-capable type (tiles/terrain/mesh/osgb)',
+          cfg: 'per-mesh simplification config is mesh-only',
+        };
+        for (const [fld, staged] of [['prj', prjName], ['cps', cpsName], ['cfg', cfgName]]) {
+          if (staged && !SIDE_CAR_FOR[fld].includes(options.type)) {
+            throw err(422, 'SIDE_CAR_UNSUPPORTED',
+              `uploaded ${fld} file is not supported for type "${options.type}" — ${SIDE_CAR_HINT[fld]}`,
+              { supportedFor: SIDE_CAR_FOR[fld] });
+          }
+        }
 
         // ---- tree channels: relPaths folder upload, or one ZIP that extracts
         // to a directory tree (keeps FBX/OBJ side-car textures resolvable) ----
@@ -373,6 +412,8 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
             if (segs.some((s) => !s || s === '.' || s === '..' || /[:\x00]/.test(s))) {
               throw err(422, 'BAD_REL_PATH', `unsafe relative path "${rel}"`);
             }
+            // only root-level entries share the stagedDir with side-car files
+            if (segs.length === 1) assertNotReserved(rel);
           }
           // rebuild the folder tree inside the staged dir
           for (let i = 0; i < dirFiles.length; i++) {
@@ -389,10 +430,12 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
             const extracted = await extractZip(zipBuf, stagedDir, {
               maxEntries: cfg.uploadMaxFiles,
               maxTotalBytes: Math.max(cfg.uploadMaxBytes, 1) * 4,
+              reservedRootNames: RESERVED_STAGING,
             });
             if (!extracted.files) throw err(400, 'EMPTY_ZIP', 'zip archive contains no files');
           } catch (ze) {
             if (ze.code === 'ZIP_BOMB') throw err(400, 'ZIP_BOMB', ze.message);
+            if (ze.code === 'ZIP_RESERVED') throw err(422, 'RESERVED_NAME', ze.message);
             if (ze.statusCode) throw ze;
             throw err(422, 'ZIP_PATH', ze.message);
           }
@@ -442,9 +485,11 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
                 extracted = await extractZip(zipBuf, stagedDir, {
                   maxEntries: cfg.uploadMaxFiles,
                   maxTotalBytes: Math.max(cfg.uploadMaxBytes, 1) * 4,
+                  reservedRootNames: RESERVED_STAGING,
                 });
               } catch (ze) {
                 if (ze.code === 'ZIP_BOMB') throw err(400, 'ZIP_BOMB', ze.message);
+                if (ze.code === 'ZIP_RESERVED') throw err(422, 'RESERVED_NAME', ze.message);
                 throw err(422, 'ZIP_PATH', ze.message);
               }
               if (!extracted.files) throw err(400, 'EMPTY_ZIP', 'zip archive contains no files');
@@ -454,6 +499,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
               delete options.dirName;
               break;
             }
+            assertNotReserved(nm);   // would silently overwrite a staged side-car
             await fsp.rename(path.join(stagedDir, df.seq), path.join(stagedDir, nm));
             validateInput(options.type, { name: nm, kind: 'file' });
             names.push(nm);
