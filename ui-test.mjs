@@ -40,9 +40,17 @@ const step = async (name, fn) => {
 };
 
 // The whitelist suite step writes workspace/whitelist.json.  Snapshot the live
-// entries first so a test run against a real deployment can never lock anyone out.
-const wlSnapshot = (await (await fetch(BASE + '/api/v1/whitelist')).json().catch(() => ({ whitelist: [] })))
-  .whitelist.filter((e) => e !== '127.0.0.1' && e !== '::1');
+// entries first so a test run against a real deployment can never lock anyone
+// out.  IMPORTANT: only trust the snapshot if the GET actually succeeded —
+// a boot-time fetch failure degrades to [] and would then *clear* the real
+// whitelist on restore.  When the snapshot is unusable we SKIP step 25 instead
+// of risking a live deployment's access list.
+const wlProbe = await fetch(BASE + '/api/v1/whitelist')
+  .then((r) => (r.ok ? r.json() : null))
+  .catch(() => null);
+const wlSnapshotOk = Boolean(wlProbe);
+const wlSnapshot = (wlProbe?.whitelist ?? [])
+  .filter((e) => e !== '127.0.0.1' && e !== '::1');
 const wlRestore = async () => {
   await fetch(BASE + '/api/v1/whitelist', {
     method: 'POST',
@@ -798,6 +806,10 @@ await step('26b 路径模式投影：浏览选 .prj → proj.prjPath 进 argv；
 
 /* ---------- 25. whitelist management page (localhost) ---------- */
   await step('25 白名单管理页：增删条目 → 保存 → 持久化 → 重置', async () => {
+    // The step clears + rewrites workspace/whitelist.json.  Only run it when
+    // the boot-time snapshot succeeded — otherwise a restore of the empty
+    // snapshot would wipe a live deployment's operator-added IPs.
+    if (!wlSnapshotOk) skip('启动时未取到白名单快照（服务未就绪/不可达），跳过以免覆盖线上白名单');
     // idempotent start: clear any leftovers from previous runs
     await fetch(BASE + '/api/v1/whitelist', {
       method: 'POST',
@@ -846,7 +858,9 @@ await step('26b 路径模式投影：浏览选 .prj → proj.prjPath 进 argv；
   });
 }
 
-await wlRestore().catch(() => {});   // safety net even if a step threw mid-flight
+// safety net even if a step threw mid-flight — but never wipe the live
+// whitelist with an empty snapshot just because the boot probe failed
+await (wlSnapshotOk ? wlRestore() : Promise.resolve()).catch(() => {});   // eslint-disable-line
 await browser.close();
 console.log(`\n${passN} pass / ${failN} fail / ${skipN} skip / ${passN + failN + skipN} total`);
 process.exit(failN ? 1 : 0);

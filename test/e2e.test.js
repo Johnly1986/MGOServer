@@ -1049,3 +1049,121 @@ test('fs browse: 403 + capability off when allowLocalPath disabled', skip, async
     await app3.close();
   }
 });
+
+test('maxConcurrentJobs is honored for a burst of queued jobs', skip, async () => {
+  // Regression: pump() used to gate on handles.size, but a slot only appears
+  // in `handles` once spawn() runs — after start() has already awaited.
+  // A synchronous burst therefore drained the entire queue and launched N mgo
+  // processes against maxConcurrentJobs=1.  Instrument the binary to record
+  // how many runs overlap in time.
+  const marker = path.join(tmp, 'burst-' + Date.now() + '.log');
+  const wrapper = path.join(tmp, 'burst-mgo.sh');
+  await fsp.writeFile(wrapper,
+    '#!/usr/bin/env bash\n'
+    + 'echo "S $(date +%s%N)" >> "' + marker + '"\n'
+    + 'sleep 0.35\n'
+    + 'echo "E $(date +%s%N)" >> "' + marker + '"\n'
+    + 'exit 0\n');
+  await fsp.chmod(wrapper, 0o755);
+  const origBinary = app.cfg.binary;
+  app.cfg.binary = wrapper;
+  const tif = path.join(tmp, 'burst.tif');
+  await fsp.writeFile(tif, 'x');
+  try {
+    const ids = [];
+    for (let i = 0; i < 4; i++) {   // fire them back-to-back, no waiting
+      const r = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: tif });
+      assert.equal(r.status, 201, JSON.stringify(r.json));
+      ids.push(r.json.id);
+    }
+    for (const id of ids) await waitTerminal(id, 15000);
+    const text = await fsp.readFile(marker, 'utf8');
+    const evs = text.trim().split('\n').filter(Boolean);
+    assert.equal(evs.length, 8, 'expected 4 start + 4 end markers');
+    let active = 0; let peak = 0;
+    for (const e of evs) {
+      active += e[0] === 'S' ? 1 : -1;
+      assert.ok(active >= 0, 'marker imbalance: ' + text);
+      peak = Math.max(peak, active);
+    }
+    assert.equal(peak, 1, `maxConcurrentJobs=1 violated: ${peak} overlapping mgo runs`);
+  } finally {
+    app.cfg.binary = origBinary;
+    delete process.env.FAKE_SLEEP;
+  }
+});
+
+test('log?tail is clamped: junk/negative/zero values cannot dump the whole log', skip, async () => {
+  // Regression: Number("abc")=NaN / tail=0 / tail=-3 slipped past the slice
+  // cap (slice(NaN)→slice(0), slice(+3) after -min()) and returned the whole
+  // run.log.  A long run can be many MB, so the cap must hold for any input.
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'terrain' }));
+  fd.append('file', new Blob(['T']), 'cap.tif');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const j = await r.json();
+  await waitTerminal(j.id);
+  const logPath = path.join(tmp, 'ws', 'jobs', j.id, 'run.log');
+  // pad the real log with well over 2000 lines so the 2000-line cap is testable
+  const pad = Array.from({ length: 2500 }, (_, i) => `pad-line-${i}`).join('\n') + '\n';
+  await fsp.appendFile(logPath, pad);
+
+  const tail = async (v) => {
+    const q = v === undefined ? '' : `?tail=${encodeURIComponent(v)}`;
+    const { json } = await api('GET', `/api/v1/jobs/${j.id}/log${q}`);
+    return json.lines;
+  };
+  const big = await tail(2000);
+  assert.equal(big.length, 2000, 'cap should be 2000 lines');
+  assert.ok(big.at(-1).startsWith('pad-line-2499'));
+  assert.ok((await tail('abc')).length <= 2000, 'NaN tail must not dump whole log');
+  assert.ok((await tail('0')).length <= 2000 && (await tail('-3')).length <= 2000
+    && (await tail('1e9')).length <= 2000, 'degenerate tail values must stay capped');
+  const n3 = await tail(3);
+  assert.deepEqual(n3, ['pad-line-2497', 'pad-line-2498', 'pad-line-2499'], 'tail=3 must be last 3 lines');
+  // default (no param) is 200
+  assert.equal((await tail()).length, 200);
+});
+
+test('QUEUE_FULL after a multipart upload leaves no orphan under workspace/tmp', skip, async () => {
+  // Regression: staged uploads lived in workspaceRoot/tmp/<uuid>; QUEUE_FULL /
+  // DISK_FULL were thrown by manager.create() AFTER the payload had already
+  // been streamed there, and nothing ever swept tmp/ — a full queue leaked
+  // gigabytes of uploads forever.
+  const tmpRoot = path.join(tmp, 'ws', 'tmp');
+  await fsp.writeFile(path.join(tmp, 'dem.tif'), 'fake-tif');   // standalone-safe
+  const stall = process.env.FAKE_STALL;
+  process.env.FAKE_STALL = '5';
+  const ids = [];
+  try {
+    // hold the single run slot + fill the 5-deep queue (6 creates OK)
+    for (let i = 0; i < 6; i++) {
+      const r = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: path.join(tmp, 'dem.tif') });
+      assert.equal(r.status, 201, JSON.stringify(r.json));
+      ids.push(r.json.id);
+    }
+    // wait until the queue is actually full (5 pending + 1 running)
+    let depth = 0;
+    for (let i = 0; i < 100 && depth < 5; i++) {
+      const m = await api('GET', '/api/v1/metrics');
+      depth = m.json.jobs.queueDepth;
+      if (depth < 5) await new Promise((r) => setTimeout(r, 30));
+    }
+    assert.equal(depth, 5, `queue depth ${depth}`);
+    const before = await fsp.readdir(tmpRoot);
+    // 7th upload streams into tmp/, then create() must 429 and clean it up
+    const fd = new FormData();
+    fd.append('options', JSON.stringify({ type: 'terrain' }));
+    fd.append('file', new Blob(['x'.repeat(1024 * 64)]), 'big.tif');
+    const resp = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+    const body = await resp.json().catch(() => null);
+    assert.equal(resp.status, 429, JSON.stringify(body));
+    assert.equal(body?.error?.code, 'QUEUE_FULL', JSON.stringify(body));
+    const after = await fsp.readdir(tmpRoot);
+    assert.deepEqual(after, before, 'staged upload must be removed on QUEUE_FULL');
+  } finally {
+    if (stall === undefined) delete process.env.FAKE_STALL; else process.env.FAKE_STALL = stall;
+    // release the queue: cancel whatever is still running/pending
+    for (const id of ids) await fetch(base + `/api/v1/jobs/${id}/cancel`, { method: 'POST' }).catch(() => {});
+  }
+});

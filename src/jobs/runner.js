@@ -38,22 +38,38 @@ export function runJob({ binary, args, logPath, timeoutMs = 0, onLine }) {
     }
 
     const log = fs.createWriteStream(logPath, { flags: 'a' });
+    // The job dir may be removed while the child runs, or the volume can fill up
+    // (ENOSPC): an 'error' on a stream with no listener is an uncaught exception
+    // that takes the whole server down.  Logging is best-effort — swallow it.
+    log.on('error', () => {});
     let timedOut = false;
     let settled = false;
 
-    const kill = () => {
-      if (child?.pid) treeKill(child.pid, 'SIGTERM', () => {});
+    const kill = (signal = 'SIGTERM') => {
+      if (child?.pid) treeKill(child.pid, signal, () => {});
     };
-    killFn = () => { killRequested = true; kill(); };
+    const escalate = () => {
+      // SIGTERM is advisory: an uncooperative child would otherwise hold the
+      // slot (and a remove()'s job dir) forever.  tree-kill propagates the
+      // signal through the process group; if it is still alive after a grace
+      // period, escalate to SIGKILL.
+      const t = setTimeout(() => {
+        if (!settled && child.pid) kill('SIGKILL');
+      }, 3000);
+      t.unref?.();
+    };
+    killFn = () => { if (!killRequested) { killRequested = true; kill('SIGTERM'); escalate(); } };
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
+    child.stdout.on('error', () => {});
+    child.stderr.on('error', () => {});
     child.stdout.on('data', makeLineHandler((l) => { log.write(`${l}\n`); onLine?.(l, 'stdout'); }));
     child.stderr.on('data', makeLineHandler((l) => { log.write(`${l}\n`); onLine?.(l, 'stderr'); }));
     // stdin is 'ignore' → child.stdin is null; nothing to close.
 
     const timer = timeoutMs > 0
-      ? setTimeout(() => { timedOut = true; kill(); }, timeoutMs)
+      ? setTimeout(() => { timedOut = true; killFn(); }, timeoutMs)
       : null;
 
     const finish = (r) => {

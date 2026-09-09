@@ -218,7 +218,12 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     }
     const all = [...new Set([...BUILTIN_LOCAL, ...parsed])];
     await fsp.mkdir(path.dirname(cfg.whitelistFile), { recursive: true });
-    await fsp.writeFile(cfg.whitelistFile, JSON.stringify(all, null, 2) + '\n');
+    // Atomic write (tmp + rename) — a crash mid-write used to corrupt
+    // whitelist.json, after which loadWhitelist silently dropped every
+    // operator-added IP on restart (indistinguishable from "never set").
+    const tmpWl = cfg.whitelistFile + '.tmp';
+    await fsp.writeFile(tmpWl, JSON.stringify(all, null, 2) + '\n');
+    await fsp.rename(tmpWl, cfg.whitelistFile);
     cfg.whitelist.length = 0;
     cfg.whitelist.push(...all);   // live update (config.isAllowedIp closes over this array)
     return reply.code(200).send({ whitelist: cfg.whitelist });
@@ -279,10 +284,11 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
   app.post('/api/v1/jobs', async (req, reply) => {
     const ct = String(req.headers['content-type'] ?? '');
     let options; let input;
+    let stagedDir = null;   // multipart staging dir; removed on every failure path
 
     if (ct.includes('multipart/form-data')) {
       const id = randomUUID();
-      const stagedDir = path.join(cfg.workspaceRoot, 'tmp', id);
+      stagedDir = path.join(cfg.workspaceRoot, 'tmp', id);
       await fsp.mkdir(stagedDir, { recursive: true });
       try {
         let optionsRaw = null;
@@ -541,7 +547,17 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })));
     }
     const params = checkParamPaths(parsed.data, cfg);
-    const job = await manager.create({ type: parsed.data.type, params, input });
+    let job;
+    try {
+      job = await manager.create({ type: parsed.data.type, params, input });
+    } catch (e) {
+      // create() rejects (QUEUE_FULL / DISK_FULL / missing file) AFTER the
+      // upload was already streamed into stagedDir; the parse-time catch above
+      // can't see this far, so clean up here or every full queue leaves
+      // gigabytes of orphaned uploads under workspace/tmp forever.
+      if (stagedDir) await fsp.rm(stagedDir, { recursive: true, force: true }).catch(() => {});
+      throw e;
+    }
     return reply.code(201).send(jobDto(job));
   });
 
@@ -567,7 +583,10 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
   });
 
   app.get('/api/v1/jobs/:id/log', async (req) => {
-    const n = req.query.tail ? Number(req.query.tail) : 200;
+    // Only a positive integer is a tail count; anything else (0, negative,
+    // "abc", "1e9") used to bypass the slice cap and dump the whole log.
+    const raw = Number(req.query.tail);
+    const n = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 2000) : 200;
     return manager.logTail(req.params.id, n);
   });
 
@@ -595,15 +614,30 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
       'Access-Control-Allow-Origin': cfg.corsOrigin,
     });
     const lastSeen = Number(req.headers['last-event-id'] ?? req.query.lastEventId ?? 0) || 0;
-    const send = (e) => res.write(
-      `id: ${e.seq}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+    let closed = false;
+    const onEvent = ({ jobId, evt }) => { if (jobId === job.id && evt.seq > lastSeen) send(evt); };
+    const hb = setInterval(() => { if (!closed && !res.destroyed) res.write(': hb\n\n'); }, 15000);
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(hb);
+      manager.off('event', onEvent);
+    };
+    const send = (e) => {
+      // Writing to a socket the client already aborted raises an 'error' with
+      // no listener → uncaught exception kills the server.  Guard every write.
+      if (closed || res.destroyed || !res.writable) return;
+      try {
+        res.write(`id: ${e.seq}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+      } catch { cleanup(); }
+    };
+    res.on('error', cleanup);
+    res.on('close', cleanup);
+    req.raw.on('close', cleanup);
+    manager.on('event', onEvent);
     send({ seq: 0, ts: new Date().toISOString(), type: 'hello',
       status: job.status, progress: job.progress });
     for (const e of job.events) if (e.seq > lastSeen) send(e);
-    const onEvent = ({ jobId, evt }) => { if (jobId === job.id && evt.seq > lastSeen) send(evt); };
-    manager.on('event', onEvent);
-    const hb = setInterval(() => { res.write(': hb\n\n'); }, 15000);
-    req.raw.on('close', () => { clearInterval(hb); manager.off('event', onEvent); });
   });
 }
 

@@ -39,7 +39,7 @@ export class JobManager extends EventEmitter {
     this.cfg = cfg;
     this.jobs = new Map();
     this.pending = [];            // FIFO of queued job ids
-    this.handles = new Map();     // running id → {cancel}
+    this.handles = new Map();     // active job id → cancel token (child or pre-spawn)
     this._seq = 0;
     this._cleanupTimer = null;
   }
@@ -54,12 +54,32 @@ export class JobManager extends EventEmitter {
   async init() {
     await fsp.mkdir(path.join(this.cfg.workspaceRoot, 'jobs'), { recursive: true });
     await this.recover();
+    await this.sweepStaleTmp().catch(() => {});
     this._cleanupTimer = setInterval(() => { this.cleanupExpired().catch(() => {}); }, 3600_000);
     this._cleanupTimer.unref?.();
     this.cleanupExpired().catch(() => {});
   }
 
   stop() { if (this._cleanupTimer) clearInterval(this._cleanupTimer); }
+
+  /** Remove orphaned upload staging dirs (workspace/tmp/<uuid>).  Staged
+   *  uploads live here only for the duration of one POST /api/v1/jobs; a hard
+   *  kill or a create() failure (queue full / disk full) can leave one behind,
+   *  and nothing else ever sweeps the folder.  Age gate: in-flight uploads are
+   *  minutes old at most, so anything older than an hour is a crash leftover. */
+  async sweepStaleTmp(olderThanMs = 3600_000) {
+    const tmpRoot = path.join(this.cfg.workspaceRoot, 'tmp');
+    let names = [];
+    try { names = await fsp.readdir(tmpRoot); } catch { return; }
+    const cutoff = Date.now() - olderThanMs;
+    for (const name of names) {
+      const p = path.join(tmpRoot, name);
+      try {
+        const st = await fsp.stat(p);
+        if (st.isDirectory() && st.mtimeMs < cutoff) await fsp.rm(p, { recursive: true, force: true });
+      } catch { /* raced away */ }
+    }
+  }
 
   /** Boot recovery: queued/running jobs are dead children — mark interrupted. */
   async recover() {
@@ -171,14 +191,34 @@ export class JobManager extends EventEmitter {
     return job;
   }
 
+  /** One concurrency slot = one admitted job.  The token is placed into
+   *  `handles` synchronously at dequeue (so pump() can never drain the queue
+   *  past maxConcurrentJobs) and stays there until the job reaches a terminal
+   *  status.  `child` holds the live child handle once spawn() runs.
+   *
+   *  cancel() semantics:
+   *   - live child → tree-kill it (runner resolves canceled → finish())
+   *   - pre-spawn (dequeued but not yet spawned) → mark the job; the next
+   *     spawn() short-circuits instead of launching a process
+   */
+  makeToken(job) {
+    return {
+      child: null,
+      cancel: () => {
+        job._cancelRequested = true;
+        if (this.handles.get(job.id)?.child) this.handles.get(job.id).child.cancel();
+      },
+    };
+  }
+
   pump() {
     while (this.handles.size < this.cfg.maxConcurrentJobs && this.pending.length) {
       const id = this.pending.shift();
       const job = this.jobs.get(id);
       if (!job || job.status !== 'queued') continue;
+      this.handles.set(id, this.makeToken(job));
       this.start(job).catch((err) => {
         this.setStatus(job, 'failed', { error: { code: 'RUNNER', message: String(err?.message ?? err) } });
-        this.handles.delete(job.id);
         this.persist(job);
       });
     }
@@ -216,6 +256,9 @@ export class JobManager extends EventEmitter {
     return io;
   }
 
+  /** One concurrency slot: registered synchronously at dequeue (so pump() cannot
+   *  drain the queue past maxConcurrentJobs), replaced by the live child when
+   *  spawn() runs, removed when the job reaches a terminal status. */
   async start(job) {
     try {
       // inline control-points CSV → on-disk file the CLI expects (wins over upload)
@@ -348,8 +391,19 @@ export class JobManager extends EventEmitter {
     await this.finish(job, parser, { ok: true, exitCode: 0 });
   }
 
-  /** spawn + register the cancel handle; onLine overridable for scaling. */
+  /** spawn + register the live child on the job's slot token; onLine overridable
+   *  for scaling.  A pre-spawn cancel (token.cancel() before any child existed)
+   *  is honored here: the job is marked canceled without launching a process.
+   *  The token itself stays in `handles` until the job is terminal (setStatus
+   *  frees the slot) — for multi-file tiles the same job slot covers every
+   *  per-file child plus the merge. */
   spawn(job, binary, args, parser, onLine) {
+    let token = this.handles.get(job.id);
+    if (!token) { token = this.makeToken(job); this.handles.set(job.id, token); }
+    if (job._cancelRequested) {
+      delete job._cancelRequested;
+      return Promise.resolve({ ok: true, exitCode: -1, canceled: true });
+    }
     const handle = runJob({
       binary,
       args,
@@ -357,8 +411,11 @@ export class JobManager extends EventEmitter {
       timeoutMs: this.cfg.jobTimeoutS * 1000,
       onLine: onLine ?? ((line, stream) => this.onLine(job, parser, line, stream)),
     });
-    this.handles.set(job.id, handle);
-    return handle.promise.then((res) => { this.handles.delete(job.id); return res; });
+    token.child = handle;
+    return handle.promise.then((res) => {
+      if (token.child === handle) token.child = null;
+      return res;
+    });
   }
 
   fail(job, code, message) {
@@ -473,11 +530,18 @@ export class JobManager extends EventEmitter {
   async remove(id) {
     const job = this.jobs.get(id);
     if (!job) throw httpError(404, 'job not found', 'NOT_FOUND');
-    if (this.handles.has(id)) { this.handles.get(id).cancel(); await onceTerminal(job, 10_000); }
+    if (this.handles.has(id)) {
+      this.handles.get(id).cancel();
+      await onceTerminal(job, 10_000);
+      // If the child never reached terminal (stuck pre-spawn), drop the token
+      // so its slot is not leaked forever.
+      this.handles.delete(id);
+    }
     const idx = this.pending.indexOf(id);
     if (idx >= 0) this.pending.splice(idx, 1);
     this.jobs.delete(id);
     await fsp.rm(this.jobDir(id), { recursive: true, force: true });
+    this.pump();
     return true;
   }
 
@@ -487,7 +551,8 @@ export class JobManager extends EventEmitter {
     let text = '';
     try { text = await fsp.readFile(this.logPath(id), 'utf8'); } catch { return { lines: [] }; }
     const lines = text.split('\n').filter((l) => l.length);
-    return { lines: lines.slice(-Math.min(n, 2000)) };
+    const k = Number.isInteger(n) && n > 0 ? Math.min(n, 2000) : 200;
+    return { lines: lines.slice(-k) };
   }
 
   /* ---------------- infra ---------------- */
@@ -508,6 +573,7 @@ export class JobManager extends EventEmitter {
         await this.remove(id).catch(() => {});
       }
     }
+    await this.sweepStaleTmp().catch(() => {});
   }
 
   emitEvent(job, evt) {
@@ -522,13 +588,15 @@ export class JobManager extends EventEmitter {
     Object.assign(job, extra, { status });
     if (TERMINAL.has(status)) {
       job.finishedAt = extra.finishedAt ?? new Date().toISOString();
+      // a terminal job frees its concurrency slot → admit the next queued job
+      if (this.handles.delete(job.id)) this.pump();
     }
     this.emitEvent(job, { type: 'status', status, ...(status === 'succeeded'
       ? { artifacts: job.artifacts, viewerUrl: job.viewerUrl } : {}) });
   }
 
   async persist(job) {
-    const { _tail, events, ...rest } = job;
+    const { _tail, events, _cancelRequested, ...rest } = job;
     const tmp = this.metaPath(job.id) + '.tmp';
     try {
       await fsp.writeFile(tmp, JSON.stringify(rest, null, 2));

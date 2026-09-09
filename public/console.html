@@ -864,9 +864,12 @@ function openFsBrowser(type, inputEl, opts = {}) {
   fsState.input = inputEl; fsState.sel = []; fsState.last = null;
   fsState.multi = opts.multi ?? (type === 'tiles');           // tiles 可逗号多选多个模型文件
   fsState.allowDir = opts.allowDir ?? (type === 'osgb' || type === 'tiles' || type === 'mesh'); // 可选整目录（树模式）
+  // NOTE: server-path browse lists model FILES / FOLDERS only — no .zip.  ZIP
+  // is an upload-channel input (server extracts it); a server-side path to a
+  // .zip is rejected by the API as an unknown extension, so offering it here
+  // (旧版把上传 accept 的 .zip 混进来) 只会让用户选了又提交失败。
   fsState.exts = opts.exts ?? ((type === 'osgb' || type == null) ? []
-    : fileAccept(type).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
-        .concat(type === 'tiles' || type === 'mesh' ? ['.zip'] : []));
+    : fileAccept(type).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
   fsState.filter = ''; fsState.onlyOk = true; fsState.err = null;
   $('#fsFilter').value = '';
   $('#fsOnlyOk').checked = true;
@@ -1090,7 +1093,7 @@ function fieldNode(f) {
   const id = 'f_' + f.k.replace(/[^a-zA-Z0-9]/g, '_');
   const cls = 'fcell' + (f.span ? ' fspan' : '');
   if (f.t === 'bool') {
-    const cb = el('input', { type: 'checkbox', id, 'data-k': f.k });
+    const cb = el('input', { type: 'checkbox', id, 'data-k': f.k, 'data-def': f.def ? '1' : '' });
     if (f.def) cb.checked = true;
     const tail = f.def ? '默认已开启；关闭 = 显式停用' : '勾选 = 开启；不勾 = 不传该参数';
     return el('div', { class: 'chk ' + cls }, cb, el('label', { for: id }, f.label),
@@ -1215,7 +1218,9 @@ function collect() {
       if (k === 'normals') { if (!node.checked) params.normals = false; continue; }
       // mesh -L defaults ON in the CLI, so an explicit false opts out;
       // other types' --lock-border is a bare flag (only forward when checked)
-      if (k === 'lockBorder' && type === 'mesh') { setPath(params, k, node.checked); continue; }
+      // NOTE: the field key is simplify.lockBorder — matching plain
+      // "lockBorder" here never fired, so unchecking 锁边 could not disable it.
+      if (k === 'simplify.lockBorder' && type === 'mesh') { setPath(params, k, node.checked); continue; }
       if (node.checked) setPath(params, k, true);
       continue;
     }
@@ -1262,6 +1267,17 @@ function syncJson() {
   if (jsonManual) return;
   $('#jsonBox').value = JSON.stringify(collect().params, null, 2);
 }
+/** 退出 JSON 手改模式（还原只读预览 + 按新表单重建 JSON）。切任务类型时
+ *  必须重置：否则旧类型的 JSON 残留「以此为准」、提交时还会被强改 type，
+ *  造成与新表单不一致的 422。 */
+function exitJsonManual() {
+  if (!jsonManual) return;
+  jsonManual = false;
+  $('#jsonBox').readOnly = true;
+  $('#jsonModeLabel').textContent = '预览';
+  applyPathOnly();
+  syncJson();
+}
 $('#jsonGrp').querySelector('summary').addEventListener('click', () => {
   jsonManual = !jsonManual;
   $('#jsonBox').readOnly = !jsonManual;
@@ -1273,7 +1289,10 @@ function applyJsonToForm(p) { // best-effort form fill
   for (const node of $('#paramForm').querySelectorAll('[data-k]')) {
     const k = node.dataset.k; if (k.startsWith('@')) continue;
     const v = getPath(p, k);
-    if (node.type === 'checkbox') node.checked = v === undefined ? (node.id === 'f_normals' ? true : false) : Boolean(v);
+    // Checkboxes default per the field spec (normals / mesh 锁边 are ON by
+    // default; everything else OFF) — JSON round-trip must not flip a default
+    // ON control to OFF just because the key is absent.
+    if (node.type === 'checkbox') node.checked = v === undefined ? node.dataset.def === '1' : Boolean(v);
     else node.value = v ?? '';
   }
   for (const key of ['origin', 'georef.sevenParameter', 'georef.offset', 'enu']) {
@@ -1476,6 +1495,8 @@ $('#copyLogBtn').onclick = async () => {
 const logModal = $('#logModal');
 const logDialog = $('#logDialog');
 const logOpen = () => !logModal.hidden;
+let logGen = 0;   // 每次 openLog 递增：丢弃上一个请求的迟到回调（连点两行日志时
+                  // 第一个 fetch 回来不能覆盖第二个任务的内容）
 const logBadge = (st) => { $('#logJob').className = 'badge mono s-' + (st || 'queued'); };
 const logTrigger = (id) => {
   try { return document.querySelector(`#jobs tr[data-id="${CSS.escape(id)}"] button[data-act="log"]`); }
@@ -1496,6 +1517,7 @@ function toggleModalChrome(on) {
 }
 
 async function openLog(id) {
+  const gen = ++logGen;
   logJobId = id;
   logModal.hidden = false;
   toggleModalChrome(true);
@@ -1505,14 +1527,20 @@ async function openLog(id) {
   if (es) { es.close(); es = null; }
   render();                                     // 标记正在看日志的行
   logDialog.focus({ preventScroll: true });     // 键盘/Esc 立刻可用
+  const stale = () => gen !== logGen || logJobId !== id;
   // render history FIRST, then attach EventSource — otherwise a late fetch
   // callback clobbers live [progress] lines already appended (was a real race)
   try {
     // 弹框比原来的内嵌面板高得多，历史行数相应放宽（服务端 tail 上限 2000）
     const o = await (await fetch(`/api/v1/jobs/${id}/log?tail=300`)).json();
+    if (stale()) return;                        // 弹框已切到别的任务：别覆盖
     $('#logBox').textContent = (o.lines || []).join('\n') + '\n—— 以下为实时日志 ——\n';
-  } catch { $('#logBox').textContent = '—— 实时日志 ——\n'; }
+  } catch {
+    if (stale()) return;
+    $('#logBox').textContent = '—— 实时日志 ——\n';
+  }
   scroll();
+  if (stale()) return;                          // fetch 期间被 closeLog/重开：不再挂流
   es = new EventSource(`/api/v1/jobs/${id}/events`);
   // 实时行必须是真实 <span> 元素（Element.append 收到字符串只会当纯文本插入，
   // 曾导致 <span …> 包装标签原样露在日志里、颜色类从未生效）
@@ -1728,6 +1756,12 @@ $('#submit').onclick = async () => {
     openLog(body.id); loadJobs();
     showMsg(`任务已提交：${body.id.slice(0, 8)}`, 'ok');
     toast('任务已提交，正在处理…', 'ok');
+  } catch (err) {
+    // 网络中断/服务不可达时 fetch 会 reject——旧代码 try/finally 没有 catch，
+    // 异常变成未处理的 Promise rejection，按钮虽然复原了用户却看不到任何提示。
+    const what = String(err?.message ?? err);
+    showMsg('提交失败（网络/服务异常）：' + what, 'err');
+    toast('提交失败：' + what, 'err', 5200);
   } finally {
     btn.disabled = false; btn.textContent = old;
   }
@@ -1739,6 +1773,7 @@ $('#type').append(...['tiles', 'terrain', 'image', 'geojson', 'mesh', 'osgb']
 $('#type').onchange = () => {
   const t = $('#type').value;
   $('#typeDesc').textContent = DESC[t];
+  exitJsonManual();   // JSON 手改内容属于旧类型，切换后不得再「以此为准」
   renderInputArea(t); renderForm(t);
 };
 async function probeCaps() {
