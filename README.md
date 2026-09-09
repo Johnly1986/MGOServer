@@ -22,7 +22,7 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 ## 功能特性
 
 - 支持六类任务：模型转 3D Tiles、地形切片、影像切片、GeoJSON 坐标转换、模型简化转格式、OSGB 倾斜摄影（需以 MGO_WITH_OSG 编译）。
-- 坐标系支持 EPSG、WKT、+proj、.prj 自定义投影：上传模式可直接附带投影文件，服务器路径模式可在控制台选取本机 .prj/.wkt（proj.prjPath，文件优先于文本框）。支持 7 参数 Helmert、单锚点、多控制点最小二乘配准，
+- 坐标系投影支持 EPSG、WKT、+proj、.prj、 7 参数 Helmert、单锚点、多控制点配准。
 - 支持 Windows / Linux 双平台，Node.js 服务形态，自带 systemd unit；第三方前端通过 REST API 即可接入。
 
 ## 环境要求
