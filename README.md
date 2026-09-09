@@ -35,7 +35,7 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 
 ## 安装
 
-Linux x86-64 开箱即用——引擎二进制已随仓库提供，装好 Node 和一组运行库即可：
+Linux\Windows 开箱即用，装好 Node：
 
 ```bash
 git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
