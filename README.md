@@ -71,18 +71,6 @@ curl -F 'options={"type":"tiles","modelPaths":["bridge/root.fbx","roadbed/root.f
   -F file=@models.zip -F prj=@103d10m.prj http://127.0.0.1:8080/api/v1/jobs
 
 随后 `GET /api/v1/jobs/{id}` 查状态，或 `GET /api/v1/jobs/{id}/events` 订阅 SSE 进度。
-任务参数全集（配准、简化细分项）见 [docs/VISUALIZATION_SERVICE_DESIGN.md](docs/VISUALIZATION_SERVICE_DESIGN.md) 附录 A。
-
-**访问控制**：写操作（POST / DELETE）要求客户端 IP 在白名单内，本机 `127.0.0.1` / `::1` 恒放行；
-读接口不设限。要让外部电脑能提交：在服务器本机打开 `whitelist.html` 加入自己的 IP 并保存，
-立即生效，持久化到 `workspace/whitelist.json`，重启不丢。
-
-**常驻运行（Linux systemd）**：
-
-```bash
-sudo cp deploy/mgo-server.service /etc/systemd/system/
-sudo cp deploy/mgo-server.env.example /etc/mgo-server.env   # 按需改 IP / binary / 端口
-sudo systemctl daemon-reload && sudo systemctl enable --now mgo-server
 ```
 
 **离线环境**：
@@ -98,7 +86,7 @@ npm i cesium@1.111 --no-save && npm run sync:cesium
 
 ## 📄 许可
 
-[Apache License 2.0](LICENSE)，无论是用于商业用途还是非商业用途都是免费的；第三方依赖声明见
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+[Apache License 2.0](LICENSE)，无论是用于商业用途还是非商业用途都是免费的；
+第三方依赖声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 平台支持：MGO 引擎以 MSVC 2022（Windows）与 GCC 9+（Linux）构建验证。
