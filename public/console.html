@@ -563,7 +563,7 @@ const gGeoref = ({ meshOffset = false } = {}) => {
 };
 const gSimplify = ({ local = false, errPh = '留空=不简化' } = {}) => {
   const g = el2('简化', [
-    F('simplify.error', 'num', '误差 error', { ph: errPh, min: 0, max: 1, hint: '简化允许的几何偏差；值越大保留的面越少、速度越快' }),
+    F('simplify.error', 'num', '误差 error', { ph: errPh, min: 0, max: 0.2, hint: '简化允许的相对几何偏差；值越大保留的面越少、速度越快' }),
     F('simplify.normalWeight', 'num', '法线权重', { ph: '默认 0.1', min: 0, max: 1, hint: '简化时保持法线方向的权重；越大光照越平滑稳定' }),
     F('simplify.threshold', 'num', '三角面比例', { ph: '默认 0.1', min: 0, hint: '面合并的判定比例；越大简化越保守' }),
     // mesh 的 -L 是带值布尔且 CLI 默认开 → 默认勾选；其余类型默认关
