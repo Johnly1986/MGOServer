@@ -42,7 +42,7 @@ git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
 npm ci
 ```
 
-构建产物 [MGO] (https://github.com/Johnly1986/MGO/releases) （`MGOConsole` 及其 `.so`，或 `MGOConsole.exe` 及其 `.dll`）按系统放进本仓库
+构建产物 [MGO](https://github.com/Johnly1986/MGO/releases) 按系统放进本仓库
 `build/bin/linux/` 或 `build/bin/windows/`。
 
 ## 快速开始
