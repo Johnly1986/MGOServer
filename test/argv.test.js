@@ -186,3 +186,75 @@ test('schema: offset/localError are mesh-only, verbose is not an API param', () 
   assert.equal(jobSchema.safeParse({ type: 'terrain', verbose: true }).success, false);
   assert.equal(jobSchema.safeParse({ type: 'mesh', verbose: false }).success, false);
 });
+
+/* ---------------- tiles: BIM property binding (--bim-*) ---------------- */
+
+test('tiles bim: full mapping matches MGOConsole --bim-* flags', () => {
+  const params = P({
+    type: 'tiles',
+    bim: {
+      bind: true, propsPath: '/data/ledger.csv', idProperty: 'GlobalId,ElementId',
+      strategy: 'ifc', report: true, noSceneMeta: true, noInherit: true,
+    },
+  });
+  const args = buildArgs({ type: 'tiles', params }, { input: '/in/a.ifc', out: '/out/a' });
+  assert.deepEqual(args.slice(5), [
+    '--bim-bind',
+    '--bim-props', '/data/ledger.csv',
+    '--bim-id-property', 'GlobalId,ElementId',
+    '--bim-strategy', 'ifc',
+    '--bim-report', '/out/a/bim_report.json',
+    '--bim-no-scene-meta', '--bim-no-inherit',
+  ]);
+});
+
+test('tiles bim: uploaded sidecar (io.bimPropsFile) wins over bim.propsPath', () => {
+  const params = P({ type: 'tiles', bim: { propsPath: '/data/ledger.csv' } });
+  const args = buildArgs({ type: 'tiles', params },
+    { input: '/in/a.fbx', out: '/out/a', bimPropsFile: '/w/input/_bim_props.csv' });
+  assert.ok(args.includes('/w/input/_bim_props.csv'), 'staged upload must win');
+  assert.ok(!args.includes('/data/ledger.csv'));
+});
+
+test('tiles bim: props without bind still emits --bim-props (engine implies bind)', () => {
+  const params = P({ type: 'tiles', bim: { propsPath: '/d/l.csv' } });
+  const args = buildArgs({ type: 'tiles', params }, { input: '/in/a.fbx', out: '/out/a' });
+  assert.ok(!args.includes('--bim-bind'));
+  assert.ok(args.includes('--bim-props'));
+});
+
+test('tiles bim: per-file reports land under each stem dir (multi-file tiles)', () => {
+  const params = P({ type: 'tiles', bim: { bind: true, report: true } });
+  const a1 = buildArgs({ type: 'tiles', params }, { input: '/in/a.fbx', out: '/out/bridge_a' });
+  const a2 = buildArgs({ type: 'tiles', params }, { input: '/in/b.fbx', out: '/out/road_b' });
+  assert.equal(a1[a1.indexOf('--bim-report') + 1], '/out/bridge_a/bim_report.json');
+  assert.equal(a2[a2.indexOf('--bim-report') + 1], '/out/road_b/bim_report.json');
+});
+
+test('tiles without bim: argv byte-identical to the classic pipeline (zero-impact promise)', () => {
+  const base = { type: 'tiles', simplify: { error: 0.01 } };
+  const plain = buildArgs({ type: 'tiles', params: P(base) }, { input: '/in/a.fbx', out: '/out/a' });
+  const off = buildArgs({ type: 'tiles', params: P({ ...base }) }, { input: '/in/a.fbx', out: '/out/a' });
+  assert.deepEqual(off, plain);
+  assert.ok(!plain.some((x) => x.startsWith('--bim')), 'no --bim flags without params');
+});
+
+test('tiles bim: non-tiles types and junk keys rejected by schema', () => {
+  assert.equal(jobSchema.safeParse({ type: 'mesh', bim: { bind: true } }).success, false,
+    'bim is tiles-only (only the tiles CLI knows --bim-*)');
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: {} }).success, false,
+    'empty bim: nothing active');
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { bind: false } }).success, false,
+    'bind:false activates nothing');
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { strategy: 'dxf' } }).success, false,
+    'strategy must be one of ifc|fbx|gltf2|obj|3ds|generic');
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { bind: true, nope: 1 } }).success, false);
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { bind: true } }).success, true);
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { report: true } }).success, true);
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { idProperty: 'GlobalId, my id' } }).success, false,
+    'keys carry no spaces');
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { idProperty: '-id' } }).success, false,
+    'keys never start with "-" (flag lookalike)');
+  assert.equal(jobSchema.safeParse({ type: 'tiles', bim: { idProperty: 'my-id,ifcGUID' } }).success, true,
+    'inner hyphens are fine');
+});

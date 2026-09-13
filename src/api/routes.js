@@ -13,15 +13,16 @@ function err(status, code, message, details) {
   return Object.assign(new Error(message), { statusCode: status, errCode: code, details });
 }
 
-/** Staged side-car names (uploaded prj / control-points / mesh config land in
- *  the job input dir under these names, which argv then feeds the engine).
+/** Staged side-car names (uploaded prj / control-points / mesh config / BIM
+ *  props land in the job input dir under these names, which argv then feeds
+ *  the engine).
  *  User content must never use them: all three upload channels (flat rename,
  *  relPaths tree, ZIP extract) write AFTER the side-cars are staged, so a
  *  user file with one of these names would silently overwrite the side-car
  *  and the converter would consume the wrong data. */
 const RESERVED_STAGING = new Set([
   '_projection.prj', '_projection.wkt', '_projection.proj',
-  '_controlpoints.csv', '_config.csv',
+  '_controlpoints.csv', '_config.csv', '_bim_props.csv',
 ]);
 
 function assertNotReserved(name) {
@@ -159,6 +160,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
       localPathInput: cfg.allowLocalPath,
       fsBrowse: cfg.allowLocalPath,
       multiFileTiles: Boolean(cfg.tilesToolsCli),
+      bimBinding: Boolean(mgo.hasBim),
       authMode: 'ip-whitelist',
     },
     client: {
@@ -311,7 +313,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
       await fsp.mkdir(stagedDir, { recursive: true });
       try {
         let optionsRaw = null;
-        let fileName = null; let prjName = null; let cpsName = null; let cfgName = null;
+        let fileName = null; let prjName = null; let cpsName = null; let cfgName = null; let propsName = null;
         const dirFiles = [];   // {seq, orig} for directory uploads
         let fileSeq = 0;
         for await (const part of req.parts()) {
@@ -352,9 +354,20 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
               }
               destName = '_config.csv';
               cfgName = destName;
+            } else if (part.fieldname === 'props') {
+              // tiles-only: BIM sidecar property table (--bim-props), first
+              // column = join key, RFC4180 quoting; the engine fail-fasts on
+              // an unreadable table, so an empty upload is rejected already
+              if (propsName) throw err(400, 'TOO_MANY_FILES', 'duplicate file field "props"');
+              const ext = extOf(sanitizeFileName(part.filename));
+              if (!['csv', 'txt'].includes(ext)) {
+                throw err(422, 'PROPS_EXT', 'BIM property table must be .csv/.txt', { expected: ['csv', 'txt'] });
+              }
+              destName = '_bim_props.csv';
+              propsName = destName;
             } else {
               throw err(400, 'UNKNOWN_FILE_FIELD', `unexpected file field "${part.fieldname}"`,
-                { expected: ['file', 'prj', 'cps', 'cfg'] });
+                { expected: ['file', 'prj', 'cps', 'cfg', 'props'] });
             }
             const dest = path.join(stagedDir, destName);
             await pipelineP(part.file, fs.createWriteStream(dest));
@@ -378,13 +391,15 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
           prj: ['tiles', 'terrain', 'image', 'mesh', 'osgb'],
           cps: ['tiles', 'terrain', 'mesh', 'osgb'],
           cfg: ['mesh'],
+          props: ['tiles'],
         };
         const SIDE_CAR_HINT = {
           prj: 'geojson has no projection input — pass sourceCrs/targetCrs instead',
           cps: 'control points need a georef-capable type (tiles/terrain/mesh/osgb)',
           cfg: 'per-mesh simplification config is mesh-only',
+          props: 'BIM property binding is tiles-only (3D Tiles Batch Table)',
         };
-        for (const [fld, staged] of [['prj', prjName], ['cps', cpsName], ['cfg', cfgName]]) {
+        for (const [fld, staged] of [['prj', prjName], ['cps', cpsName], ['cfg', cfgName], ['props', propsName]]) {
           if (staged && !SIDE_CAR_FOR[fld].includes(options.type)) {
             throw err(422, 'SIDE_CAR_UNSUPPORTED',
               `uploaded ${fld} file is not supported for type "${options.type}" — ${SIDE_CAR_HINT[fld]}`,
@@ -447,14 +462,14 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
             const dirName = sanitizeFileName(String(options.dirName ?? rels[0].split('/')[0] ?? 'osgb'));
             delete options.dirName;
             validateInput(options.type, { name: dirName, kind: 'dir' });
-            input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
+            input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, propsName, stagedDir };
           } else {
             if (options.dirName) throw err(422, 'BAD_OPTIONS', 'dirName is only valid for osgb uploads');
             const models = resolveTreeModels(options.type, rels, options);
             input = {
               kind: 'upload-tree', models,
               name: models[0], ...(models.length > 1 ? { names: models } : {}),
-              prjName, cpsName, cfgName, stagedDir,
+              prjName, cpsName, cfgName, propsName, stagedDir,
             };
           }
         } else {
@@ -495,7 +510,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
               if (!extracted.files) throw err(400, 'EMPTY_ZIP', 'zip archive contains no files');
               const dirName = sanitizeFileName(String(options.dirName ?? 'osgb'));
               validateInput(options.type, { name: dirName, kind: 'dir' });
-              input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, stagedDir };
+              input = { kind: 'upload-dir', name: dirName, prjName, cpsName, cfgName, propsName, stagedDir };
               delete options.dirName;
               break;
             }
@@ -506,10 +521,10 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
           }
           if (!input) {
             if (names.length > 1) {
-              input = { kind: 'upload', name: names[0], names, prjName, cpsName, cfgName, stagedDir };
+              input = { kind: 'upload', name: names[0], names, prjName, cpsName, cfgName, propsName, stagedDir };
             } else {
               fileName = names[0];
-              input = { kind: 'upload', name: fileName, prjName, cpsName, cfgName, stagedDir };
+              input = { kind: 'upload', name: fileName, prjName, cpsName, cfgName, propsName, stagedDir };
             }
           }
         }
@@ -591,6 +606,16 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     if (!parsed.success) {
       throw err(422, 'VALIDATION', 'invalid job options',
         parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })));
+    }
+    // BIM binding needs a --bim-* capable engine (startup probe).  Submitting
+    // against an older binary would die as an opaque USAGE_ERROR mid-queue;
+    // fail at the API instead.  (The multipart `props` field alone implies
+    // binding on the engine side — flag it here too.)
+    if (parsed.data.type === 'tiles'
+      && (parsed.data.bim || input.propsName) && !mgo.hasBim) {
+      throw err(422, 'ENGINE_NO_BIM',
+        'this mgo binary does not support BIM property binding (--bim-*): upgrade the engine or drop the bim params',
+        { mgoVersion: mgo.version, mgoPath: mgo.path });
     }
     const params = checkParamPaths(parsed.data, cfg);
     let job;

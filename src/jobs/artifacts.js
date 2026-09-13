@@ -9,7 +9,7 @@ import path from 'node:path';
 
 const ROLES = {
   TILES: '3dtiles', TERRAIN: 'terrain', IMAGERY: 'imagery',
-  GEOJSON: 'geojson', MODEL: 'model',
+  GEOJSON: 'geojson', MODEL: 'model', BIM_REPORT: 'bimReport',
 };
 
 const MAX_WALK = 20000;
@@ -83,6 +83,14 @@ export async function discoverArtifacts(jobId, outDir) {
     found.push({ role: ROLES.MODEL, path: p, url: urlOf(p),
       mediaType: isGlb ? 'model/gltf-binary' : 'application/octet-stream',
       viewer: isGlb ? { type: 'model', url: urlOf(p) } : undefined });
+  }
+
+  // BIM binding transparency manifests (tiles --bim-report): one per input
+  // stem under out/<stem>/; plain JSON, no globe preview — download role only
+  for (const f of files.filter((x) => /bim_report\.json$/i.test(x))) {
+    const p = rel(outDir, f);
+    found.push({ role: ROLES.BIM_REPORT, path: p, url: urlOf(p),
+      mediaType: 'application/json' });
   }
 
   return found;

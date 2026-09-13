@@ -41,6 +41,30 @@ export const simplifySchema = z.object({
 // -l/--localerror is mesh-only (CLI verified: tiles/terrain/osgb lack the flag)
 export const meshSimplifySchema = simplifySchema.extend({ localError: z.boolean().optional() });
 
+// bim —— tiles-only BIM property binding (MGO `tiles --bim-*`, TilesConverter
+// binding pipeline).  Per-instance attributes land in each b3dm Batch Table
+// (Cesium `feature.properties`), which is what the viewer's click-to-inspect
+// reads.  The sidecar CSV arrives either as the multipart `props` file field
+// (staged to _bim_props.csv) or as a server-local `propsPath`.
+const BIM_STRATEGIES = ['ifc', 'fbx', 'gltf2', 'obj', '3ds', 'generic'];
+export const bimSchema = z.object({
+  bind: z.boolean().optional(),                       // --bim-bind
+  propsPath: z.string().min(1).optional(),            // --bim-props (server path; upload wins)
+  // ID key override list "k1,k2": searched in scene metadata, then sidecar.
+  // Keys may contain "-" (my-id) but never start with it (flag-lookalike) and
+  // carry no whitespace/commas inside a key.
+  idProperty: z.string().min(1).max(200)
+    .regex(/^[^\s,-][^\s,]*(,[^\s,-][^\s,]*)*$/, 'idProperty: comma-separated keys, no spaces or leading "-"')
+    .optional(),
+  strategy: z.enum(BIM_STRATEGIES).optional(),        // --bim-strategy
+  report: z.boolean().optional(),                     // --bim-report out/<stem>/bim_report.json
+  noSceneMeta: z.boolean().optional(),                // --bim-no-scene-meta
+  noInherit: z.boolean().optional(),                  // --bim-no-inherit
+}).strict().refine(
+  (v) => Object.values(v).some((x) => x !== undefined && x !== false),
+  { message: 'bim requires at least one active option (bind/props/…)' },
+);
+
 export const tilesSchema = z.object({
   type: z.literal('tiles'),
   zUp: z.boolean().optional(),
@@ -53,6 +77,7 @@ export const tilesSchema = z.object({
   proj: projSchema.optional(),
   georef: georefSchema.optional(),
   simplify: simplifySchema.optional(),
+  bim: bimSchema.optional(),
 }).strict();
 
 export const terrainSchema = z.object({

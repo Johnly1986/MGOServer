@@ -1,0 +1,120 @@
+  :root { --acc:#4da3ff; --fg:#e6ecf5; --dim:#93a0b4; --dim2:#6b7889; }
+  * { box-sizing:border-box; }
+  html, body, #cesiumContainer { width:100%; height:100%; margin:0; overflow:hidden; background:#000; }
+  body { font:13px/1.6 "PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif; color:var(--fg); }
+
+  /* ---------- boot overlay ---------- */
+  #boot { position:fixed; inset:0; z-index:500; display:flex; flex-direction:column; gap:14px;
+          align-items:center; justify-content:center; background:radial-gradient(900px 500px at 50% 30%, #16202e, #0b0e13);
+          color:var(--dim); font-size:13px; transition:opacity .4s; }
+  #boot.off { opacity:0; pointer-events:none; }
+  .ring { width:42px; height:42px; border-radius:50%; border:3px solid rgba(77,163,255,.18);
+          border-top-color:var(--acc); animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ---------- HUD ---------- */
+  #hud { position:absolute; top:12px; left:12px; z-index:200; width:min(400px, calc(100vw - 24px));
+         background:rgba(15,19,26,.82); backdrop-filter:blur(14px) saturate(1.2);
+         -webkit-backdrop-filter:blur(14px) saturate(1.2);
+         color:var(--fg); padding:14px 16px; border-radius:14px;
+         border:1px solid rgba(255,255,255,.08); box-shadow:0 10px 34px rgba(0,0,0,.45);
+         max-height:calc(100vh - 24px); overflow:auto; }
+  #hud h3 { margin:0 0 10px; font-size:14px; display:flex; align-items:center; gap:8px; }
+  #hud h3 .dot { width:8px; height:8px; border-radius:50%; background:var(--acc);
+                 box-shadow:0 0 8px var(--acc); }
+  #hud .sec { margin-top:12px; }
+  #hud .sec > b { display:block; font-size:11.5px; letter-spacing:.6px; color:var(--dim2);
+                  margin-bottom:6px; font-weight:600; }
+  #hud a { color:var(--acc); text-decoration:none; } #hud a:hover { text-decoration:underline; }
+
+  #hud input, #hud select { width:100%; background:rgba(10,13,18,.7); color:var(--fg);
+                            border:1px solid rgba(255,255,255,.12); border-radius:8px;
+                            padding:7px 9px; font:12px ui-monospace,Consolas,monospace; margin:3px 0; }
+  #hud select { appearance:none; -webkit-appearance:none; padding-right:26px; cursor:pointer;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2393a0b4' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat; background-position:right 9px center; }
+  #hud input:focus, #hud select:focus { outline:none; border-color:var(--acc);
+    box-shadow:0 0 0 3px rgba(77,163,255,.18); }
+
+  #hud .row { display:flex; gap:7px; margin-top:7px; }
+  #hud .row > * { flex:1; }
+  #hud button { background:linear-gradient(135deg,var(--acc) 0%,#1b6fd6 100%); color:#fff;
+                border:none; border-radius:8px; padding:8px 10px; font-weight:600; font-size:12.5px;
+                cursor:pointer; margin:0; transition:filter .15s; }
+  #hud button:hover { filter:brightness(1.15); }
+  #hud button.ghost { background:transparent; color:var(--dim); border:1px solid rgba(255,255,255,.14);
+                      font-weight:500; }
+  #hud button.ghost:hover { color:var(--acc); border-color:var(--acc); }
+  #hud button.danger { background:transparent; color:#ff8d96; border:1px solid rgba(239,91,104,.4); font-weight:500; }
+  #hud button.danger:hover { background:rgba(239,91,104,.14); }
+
+  /* ---------- 构件属性面板（点击 3D Tiles / 实体拾取） ---------- */
+  #featPanel { position:absolute; top:58px; right:12px; z-index:202; width:min(370px, calc(100vw - 24px));
+               max-height:min(56vh, 520px); display:flex; flex-direction:column;
+               background:rgba(15,19,26,.88); backdrop-filter:blur(14px) saturate(1.2);
+               -webkit-backdrop-filter:blur(14px) saturate(1.2);
+               border:1px solid rgba(255,255,255,.1); border-radius:12px; overflow:hidden;
+               box-shadow:0 12px 36px rgba(0,0,0,.5); }
+  #featPanel[hidden] { display:none; }
+  #featPanel .fh { display:flex; align-items:center; gap:8px; flex:none; padding:9px 12px;
+                   background:rgba(77,163,255,.10); border-bottom:1px solid rgba(255,255,255,.08); }
+  #featPanel .fh b { font-size:13px; }
+  #featPanel .fh .tagx { font-size:10.5px; color:var(--dim2); font-family:ui-monospace,Consolas,monospace; }
+  #featPanel .fx { margin-left:auto; cursor:pointer; color:var(--dim); padding:1px 7px; border-radius:6px; font-size:13px; }
+  #featPanel .fx:hover { color:#ff8d96; background:rgba(239,91,104,.15); }
+  #featBody { overflow:auto; padding:4px 0 6px; overscroll-behavior:contain; }
+  #featBody table { width:100%; border-collapse:collapse; }
+  #featBody td { padding:4px 12px; font-size:12px; vertical-align:top; border-bottom:1px solid rgba(255,255,255,.045); }
+  #featBody td.k { color:var(--dim2); width:38%; word-break:break-all; font-family:ui-monospace,Consolas,monospace; font-size:11.5px; }
+  #featBody td.v { color:var(--fg); word-break:break-all; font-variant-numeric:tabular-nums; }
+  #featEmpty { padding:14px 14px; color:var(--dim); font-size:12.5px; line-height:1.7; }
+  #featPanel .ff { flex:none; display:flex; align-items:center; gap:8px; padding:7px 12px;
+                   border-top:1px solid rgba(255,255,255,.08); font-size:11px; color:var(--dim2); }
+  #featPanel .ff button { margin:0; padding:4px 10px; font-size:11.5px; border-radius:7px; }
+
+  /* layer list */
+  #layerList { list-style:none; margin:0; padding:0; }
+  #layerList li { display:flex; align-items:center; gap:8px; padding:7px 9px; margin-bottom:5px;
+                  border-radius:8px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.07);
+                  cursor:pointer; font-size:12.5px; transition:.15s; }
+  #layerList li:hover { border-color:var(--acc); background:rgba(77,163,255,.08); }
+  #layerList li .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #layerList li .tag2 { margin-left:auto; font-size:10.5px; color:var(--dim2);
+                        font-family:ui-monospace,Consolas,monospace; }
+  #layerList li .rm { margin-left:6px; color:var(--dim2); padding:1px 6px; border-radius:6px; font-size:12px; }
+  #layerList li .rm:hover { color:var(--err); background:rgba(239,91,104,.15); }
+
+  #status { color:var(--dim); font-size:12px; margin-top:9px; min-height:16px;
+            white-space:pre-wrap; word-break:break-all; }
+  #status.ok { color:var(--acc); }
+  #status.err { color:#ff8d96; }
+
+  /* ---------- top-right toolbar ---------- */
+  #toolbar { position:absolute; top:12px; right:12px; z-index:201; display:flex; gap:8px; }
+  #toolbar button { width:38px; height:38px; border-radius:10px; border:1px solid rgba(255,255,255,.1);
+                    background:rgba(15,19,26,.78); backdrop-filter:blur(12px); color:var(--fg);
+                    font-size:15px; cursor:pointer; transition:.15s; display:grid; place-items:center; }
+  #toolbar button:hover { border-color:var(--acc); color:var(--acc); background:rgba(77,163,255,.12); }
+  #hudToggle { display:none; }
+  @media (max-width:640px) {
+    #hud { left:10px; right:10px; top:58px; width:auto; font-size:14px; }
+    #hud.collapsed { display:none; }
+    #hudToggle { display:grid; }
+    #hud button { padding:11px 12px; }
+    #featPanel { top:auto; bottom:52px; left:10px; right:10px; width:auto; max-height:40vh; }
+  }
+
+  /* ---------- bottom readouts ---------- */
+  #bar { position:absolute; left:12px; bottom:12px; z-index:200; display:flex; gap:8px; align-items:center;
+         background:rgba(15,19,26,.72); backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.08);
+         border-radius:9px; padding:6px 12px; font-size:11.5px; color:var(--dim); }
+  #bar .n { color:var(--acc); font-weight:600; font-variant-numeric:tabular-nums; }
+  #coord { position:absolute; right:12px; bottom:12px; z-index:200; background:rgba(15,19,26,.72);
+           backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.08); border-radius:9px;
+           padding:6px 12px; font:11px ui-monospace,Consolas,monospace; color:var(--dim);
+           font-variant-numeric:tabular-nums; }
+  @media (max-width:640px) { #bar { display:none; } #coord { left:10px; right:10px; bottom:8px; text-align:center; } }
+
+  .credit { margin-top:10px; padding-top:9px; border-top:1px solid rgba(255,255,255,.07);
+            color:var(--dim2); font-size:11px; display:flex; gap:10px; }
+  .credit b { color:var(--dim); font-weight:500; }

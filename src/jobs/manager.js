@@ -129,14 +129,15 @@ export class JobManager extends EventEmitter {
     if (input.kind === 'upload') {
       const names = input.names ?? [input.name];
       if (input.stagedDir) {
-        for (const nm of [...names, input.prjName, input.cpsName, input.cfgName]) {
+        for (const nm of [...names, input.prjName, input.cpsName, input.cfgName, input.propsName]) {
           if (!nm) continue;
           await fsp.rename(path.join(input.stagedDir, nm),
             path.join(this.inputDir(id), nm));
         }
         await fsp.rm(input.stagedDir, { recursive: true, force: true });
         input = { kind: 'upload', name: names[0], ...(names.length > 1 ? { names } : {}),
-          prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
+          prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName,
+          propsName: input.propsName };
       }
       // files must already have been streamed into inputDir by the route
       for (const nm of names) {
@@ -156,11 +157,12 @@ export class JobManager extends EventEmitter {
       }
       if (input.kind === 'upload-dir') {
         // osgb root = the whole input dir
-        input = { kind: 'upload-dir', name: input.name, prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
+        input = { kind: 'upload-dir', name: input.name, prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName, propsName: input.propsName };
       } else {
         input = { kind: 'upload-tree', models: input.models, name: input.models[0],
           ...(input.models.length > 1 ? { names: input.models } : {}),
-          prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName };
+          prjName: input.prjName, cpsName: input.cpsName, cfgName: input.cfgName,
+          propsName: input.propsName };
         for (const m of input.models) {
           if (!fs.existsSync(path.join(this.inputDir(id), m))) {
             await fsp.rm(this.jobDir(id), { recursive: true, force: true });
@@ -246,13 +248,14 @@ export class JobManager extends EventEmitter {
     }));
   }
 
-  /** Uploaded side-car files (.prj / control-point CSV / mesh config CSV),
-   *  all landing in the job's own input dir. */
+  /** Uploaded side-car files (.prj / control-point CSV / mesh config CSV /
+   *  BIM property table), all landing in the job's own input dir. */
   ioBase(job) {
     const io = {};
     if (job.input.prjName) io.prjFile = path.join(this.inputDir(job.id), job.input.prjName);
     if (job.input.cpsName) io.cpsFile = path.join(this.inputDir(job.id), job.input.cpsName);
     if (job.input.cfgName) io.cfgFile = path.join(this.inputDir(job.id), job.input.cfgName);
+    if (job.input.propsName) io.bimPropsFile = path.join(this.inputDir(job.id), job.input.propsName);
     return io;
   }
 

@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
  * (HAS_OSGB_CONVERTER) — see design F9.
  */
 export async function probeMgo(binary) {
-  const info = { path: binary, found: false, version: null, hasOsgb: false };
+  const info = { path: binary, found: false, version: null, hasOsgb: false, hasBim: false };
   const run = (args) => new Promise((res) => {
     const timer = setTimeout(() => res({ err: new Error('probe timeout'), out: '' }), 8000);
     execFile(binary, args, { timeout: 8000 }, (err, stdout) => {
@@ -23,5 +23,10 @@ export async function probeMgo(binary) {
   }
   const h = await run(['help']);
   if (/\bosgb\b/.test(h.out || '')) info.hasOsgb = true;
+  // TilesConverter property binding: only binaries from the --bim-* era list
+  // the flags in `tiles --help`.  An older engine would reject them (exit 2),
+  // so the console must not offer what the service cannot honour.
+  const t = await run(['tiles', '--help']);
+  if (/--bim-bind/.test(t.out || '')) info.hasBim = true;
   return info;
 }

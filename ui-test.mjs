@@ -282,6 +282,92 @@ await step('8b tiles 多文件：统一参数转换 + 合并 tileset（console �
     throw new Error('未见合并步骤日志');
 });
 
+/* ---------- 8d. tiles BIM 属性绑定：表单组 / 联动 / JSON 预览 ---------- */
+let bimCaps = null;
+let bimLedger = null;
+await step('8d tiles 属性绑定表单：组渲染、选属性表自动开启绑定、取消后联动禁用、JSON 预览同步', async () => {
+  bimCaps = await (await fetch(BASE + '/api/v1/capabilities')).json();
+  await page.selectOption('#type', 'tiles');
+  await page.waitForSelector('#paramForm details.grp');
+  const groups = await page.$$eval('#paramForm summary', (n) => n.map((x) => x.textContent));
+  if (!groups.some((g) => g.includes('属性绑定'))) throw new Error('缺「属性绑定（BIM）」组: ' + groups.join('|'));
+  // 非首组默认收起：点开全部再操作（真实用户同样是先展开再填）
+  await page.$$eval('#paramForm details.grp', (ds) => ds.forEach((d) => { d.open = true; }));
+  const unsupported = bimCaps.features?.bimBinding === false;
+  const note = await page.$$eval('#bimCapNote', (n) => n.length);
+  if (unsupported !== (note > 0)) throw new Error(`引擎能力提示与 capabilities 不符 (bimBinding=${bimCaps.features?.bimBinding}, note=${note})`);
+  if (unsupported) {
+    if (!(await page.$eval('#f_bim_bind', (n) => n.disabled)))
+      throw new Error('引擎不支持 --bim-* 时「启用绑定」应禁用');
+    console.log('      (引擎不支持 --bim-*，仅校验禁用态与提示；提交类断言跳过)');
+    return;
+  }
+  // 勾选 → JSON 预览出现 bim.*
+  await page.check('#f_bim_bind');
+  await page.selectOption('#f_bim_strategy', 'fbx');
+  await page.fill('#f_bim_idProperty', 'GlobalId,ElementId');
+  let json = JSON.parse(await page.inputValue('#jsonBox'));
+  if (json.bim?.bind !== true || json.bim.strategy !== 'fbx' || json.bim.idProperty !== 'GlobalId,ElementId')
+    throw new Error('JSON 预览缺 bim 参数: ' + JSON.stringify(json.bim));
+  // 选属性表附件 → 自动勾选绑定（镜像 --bim-props 隐含 bind）
+  await page.uncheck('#f_bim_bind');
+  bimLedger = path.join(process.env.TMPDIR || '/tmp', `ui-bim-ledger-${process.pid}.csv`);
+  fs.writeFileSync(bimLedger, 'objectName,楼层,结构\nCubeA,3,钢筋混凝土\nCubeB,5,钢结构\n');
+  await page.setInputFiles('[data-k="@props"]', bimLedger);
+  if (!(await page.$eval('#f_bim_bind', (n) => n.checked))) throw new Error('选属性表后应自动勾选「启用绑定」');
+  json = JSON.parse(await page.inputValue('#jsonBox'));
+  if (json.bim?.bind !== true) throw new Error('自动绑定未同步进 JSON 预览: ' + JSON.stringify(json.bim));
+  // 清空属性表 + 取消绑定 → 其余 bim 控件禁用（collect 跳过 disabled，不产生无效参数）
+  await page.setInputFiles('[data-k="@props"]', []);
+  await page.uncheck('#f_bim_bind');
+  const dis = await page.$$eval('[data-k="bim.strategy"],[data-k="bim.idProperty"],[data-k="bim.report"]',
+    (ns) => ns.map((n) => n.disabled));
+  if (!dis.every(Boolean)) throw new Error('未启用绑定时相关控件应禁用: ' + JSON.stringify(dis));
+  json = JSON.parse(await page.inputValue('#jsonBox'));
+  if (json.bim) throw new Error('未启用绑定时 JSON 不应含 bim: ' + JSON.stringify(json.bim));
+});
+
+/* ---------- 8e. tiles + 属性表：props 附件 → argv --bim-* + 绑定报告产物 ---------- */
+let bimJobId = null;
+await step('8e tiles 属性绑定提交：props 附件进 argv（--bim-*），bim_report 作为产物可下载', async () => {
+  const caps = bimCaps ?? await (await fetch(BASE + '/api/v1/capabilities')).json();
+  if (caps.features?.bimBinding === false) skip('服务器引擎不支持 --bim-*（capabilities.features.bimBinding=false）');
+  if (!bimLedger || !fs.existsSync(bimLedger))
+    fs.writeFileSync(bimLedger ??= path.join(process.env.TMPDIR || '/tmp', `ui-bim-ledger-${process.pid}.csv`),
+      'objectName,楼层,结构\nCubeA,3,钢筋混凝土\nCubeB,5,钢结构\n');
+  const before = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
+  await page.selectOption('#type', 'tiles');
+  await page.waitForSelector('#inputArea input#file');
+  await page.$$eval('#paramForm details.grp', (ds) => ds.forEach((d) => { d.open = true; }));
+  await page.setInputFiles('#file', OBJ_A);
+  await page.setInputFiles('[data-k="@props"]', bimLedger);
+  await page.check('#f_bim_bind');
+  await page.selectOption('#f_bim_strategy', 'obj');
+  await page.fill('#f_bim_idProperty', 'objectName');
+  await page.check('#f_bim_report');
+  await page.check('#f_bim_noInherit');
+  const preview = JSON.parse(await page.inputValue('#jsonBox'));
+  if (preview.bim?.report !== true || preview.bim.noInherit !== true) throw new Error('预览缺 report/noInherit: ' + JSON.stringify(preview.bim));
+  await page.click('#submit');
+  bimJobId = await waitForNewJob(before, 'cubeA.obj');
+  await page.waitForFunction(() => /\[status\] (succeeded|failed|usage_error)/.test(document.querySelector('#logBox').textContent),
+    null, { timeout: 120000 });
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#logModal', { state: 'hidden' });
+  const dto = await (await fetch(`${BASE}/api/v1/jobs/${bimJobId}`)).json();
+  if (dto.status !== 'succeeded') throw new Error('任务未成功: ' + dto.status + ' ' + JSON.stringify(dto.error));
+  const { lines } = await (await fetch(`${BASE}/api/v1/jobs/${bimJobId}/log?tail=200`)).json();
+  const argv = lines.find((l) => l.startsWith('[Service] argv: tiles') || l.startsWith('argv: tiles')) || '';
+  for (const re of [/--bim-bind\b/, /--bim-props \S+\/input\/_bim_props\.csv/, /--bim-strategy obj/, /--bim-id-property objectName/, /--bim-report \S+\/out\/cubeA\/bim_report\.json/, /--bim-no-inherit\b/])
+    if (!re.test(argv)) throw new Error('argv 缺 ' + re + '：' + argv);
+  const rep = (dto.artifacts || []).find((a) => a.role === 'bimReport');
+  if (!rep) throw new Error('缺 bimReport 产物: ' + JSON.stringify(dto.artifacts));
+  const repJson = await (await fetch(BASE + rep.url)).json();
+  // 报告形态与真实引擎一致：instances / withSidecarRow / features[].matchSource
+  if (!(repJson.withSidecarRow > 0) || !(repJson.features ?? []).some((f) => f.matchSource === 'sidecar'))
+    throw new Error('绑定报告未体现侧表命中: ' + JSON.stringify(repJson));
+});
+
 /* ---------- 8c. model + side-car textures ZIP (resource-tree upload) ---------- */
 async function makeResZip(entries) {
   const yazl = (await import('yazl')).default;
@@ -381,6 +467,122 @@ await step('9 viewer 加载真实 3D Tiles tileset（优先 8b 的合并产物�
   } finally {
     await vp?.close();
   }
+});
+
+/* ---------- 9b. viewer 点击构件查看属性 ---------- */
+await step('9b viewer 点击构件查看属性：实体真实点击 + 3D Tiles 要素面板/空态/Esc 关闭', async () => {
+  const vp = await newPage('/viewer.html');
+  await vp.waitForFunction(() => !!window.__mgoViewer, null, { timeout: 60000 });
+  // (a) 真实鼠标点击：GeoJSON 实体（属性 → 面板）
+  const fc = {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      properties: { Name: '测试桥梁', 楼层: 3, 结构: '钢结构' },
+      geometry: { type: 'Polygon', coordinates: [[[120.0, 30.0], [120.02, 30.0], [120.02, 30.02], [120.0, 30.02], [120.0, 30.0]]] },
+    }],
+  };
+  const loaded = await vp.evaluate(async (data) => {
+    const C = window.Cesium, v = window.__mgoViewer;
+    const ds = await C.GeoJsonDataSource.load(data, { clampToGround: false });
+    v.dataSources.add(ds);
+    await v.zoomTo(ds);
+    await new Promise((r) => setTimeout(r, 1200));
+    const e = ds.entities.values[0];
+    const pos = e.position ? e.position.getValue(v.clock.currentTime)
+      : e.polygon.hierarchy.getValue(v.clock.currentTime).positions[0];
+    const scr = v.scene.cartesianToCanvasCoordinates(pos);
+    return { n: ds.entities.values.length, x: scr?.x ?? -1, y: scr?.y ?? -1,
+      w: v.scene.canvas.clientWidth, h: v.scene.canvas.clientHeight };
+  }, fc);
+  if (!loaded.n) throw new Error('GeoJSON 实体未加载');
+  // 扫描画布上「未被 HUD 遮挡且能拾取该实体」的点（viewer 左上角有控制面板）
+  const spot = await vp.evaluate(() => {
+    const v = window.__mgoViewer; const C = window.Cesium;
+    const c = v.scene.canvas; const w = c.clientWidth, h = c.clientHeight;
+    for (let fy = 0.25; fy <= 0.8; fy += 0.05) {
+      for (let fx = 0.3; fx <= 0.92; fx += 0.05) {
+        const x = Math.round(w * fx), y = Math.round(h * fy);
+        if (document.elementFromPoint(x, y) !== c) continue;      // 被 HUD 遮挡
+        const p = v.scene.pick(new C.Cartesian2(x, y));
+        if (p && p.id instanceof C.Entity) return { x, y, name: p.id.name };
+      }
+    }
+    return null;
+  });
+  if (!spot) throw new Error('画布上未找到可命中该实体的点击位置（HUD 遮挡或渲染异常）');
+  const clickX = spot.x, clickY = spot.y;
+  await vp.mouse.click(clickX, clickY);
+  await vp.waitForFunction(() => !document.querySelector('#featPanel').hidden, null, { timeout: 8000 })
+    .catch(() => {});
+  const entPanel = await vp.evaluate(() => {
+    const p = document.querySelector('#featPanel');
+    return { open: !p.hidden, title: document.querySelector('#featTitle').textContent,
+      rows: [...document.querySelectorAll('#featBody tr')].map((tr) => tr.textContent) };
+  });
+  if (!entPanel.open) throw new Error('点击实体后属性面板未打开');
+  if (!entPanel.rows.some((r) => r.includes('测试桥梁')) || !entPanel.rows.some((r) => r.includes('楼层') && r.includes('3')))
+    throw new Error('实体属性行不符: ' + JSON.stringify(entPanel.rows));
+
+  // (b) 3D Tiles 要素分支：注入 pick 结果（batch table 形态与 Cesium 1.111 一致）
+  await vp.evaluate(() => {
+    const v = window.__mgoViewer;
+    const vals = { objectId: 'CubeA', objectName: 'CubeA', Name: '立方体甲', 楼层: 3, 结构: '钢筋混凝土' };
+    // 形状对齐真实 Cesium3DTileFeature：必须带 primitive，Cesium 自身的点击
+    // 处理会读 picked.primitive.id（缺了会抛 TypeError，被页面错误断言抓到）
+    v.scene.pick = () => ({
+      id: undefined, primitive: {}, content: {}, batchId: 7, color: null,
+      getPropertyIds: () => Object.keys(vals),
+      getProperty: (k) => vals[k],
+      getExactClassName: () => 'BIM.BuildingElement',
+    });
+  });
+  await vp.mouse.click(clickX, clickY);
+  await vp.waitForFunction(() => !document.querySelector('#featPanel').hidden, null, { timeout: 8000 });
+  const tileInfo = await vp.evaluate(() => ({
+    title: document.querySelector('#featTitle').textContent,
+    tag: document.querySelector('#featTag').textContent,
+    rows: [...document.querySelectorAll('#featBody tr')].map((tr) => tr.textContent),
+  }));
+  if (!/BuildingElement/.test(tileInfo.title)) throw new Error('tile 要素标题不符: ' + tileInfo.title);
+  if (!/batchId 7/.test(tileInfo.tag)) throw new Error('tile 要素批次标记不符: ' + tileInfo.tag);
+  for (const want of ['立方体甲', '楼层', '钢筋混凝土'])
+    if (!tileInfo.rows.some((r) => r.includes(want))) throw new Error('tile 属性行缺 ' + want + ': ' + JSON.stringify(tileInfo.rows));
+
+  // (c) 无批次表要素 → 空态提示（引导去控制台开启属性绑定）
+  await vp.evaluate(() => {
+    window.__mgoViewer.scene.pick = () => ({ id: undefined, primitive: {}, content: {}, batchId: 1, color: null, getPropertyIds: () => [], getProperty: () => undefined });
+  });
+  await vp.mouse.click(clickX, clickY);
+  await vp.waitForFunction(() => /未开启「属性绑定」/.test(document.querySelector('#featBody').textContent), null, { timeout: 8000 });
+  // (d) Esc 关闭面板
+  await vp.keyboard.press('Escape');
+  await vp.waitForFunction(() => document.querySelector('#featPanel').hidden, null, { timeout: 5000 });
+  // (e) 还原真实 pick（删掉注入的 own property）后：真实点击实体再次打开，
+  //     再点无构件处关闭。注意不能把 pick 桩成「永远 undefined」——Cesium 自身
+  //     的点击处理同样走 scene.pick，桩成 undefined 会让内部读取 picked.id 报错。
+  const blank = await vp.evaluate(() => {
+    const v = window.__mgoViewer; const C = window.Cesium;
+    delete v.scene.pick;
+    const c = v.scene.canvas; const w = c.clientWidth, h = c.clientHeight;
+    for (let fy = 0.85; fy >= 0.3; fy -= 0.05) {
+      for (let fx = 0.2; fx <= 0.95; fx += 0.05) {
+        const x = Math.round(w * fx), y = Math.round(h * fy);
+        if (document.elementFromPoint(x, y) !== c) continue;
+        const p = v.scene.pick(new C.Cartesian2(x, y));
+        if (!p || !(p.id instanceof C.Entity)) return { x, y };
+      }
+    }
+    return null;
+  });
+  if (!blank) throw new Error('未找到可用的空白点击位置');
+  await vp.mouse.click(clickX, clickY);                     // 真实拾取：实体
+  await vp.waitForFunction(() => !document.querySelector('#featPanel').hidden, null, { timeout: 8000 });
+  await vp.mouse.click(blank.x, blank.y);                   // 真实拾取：空白
+  await vp.waitForFunction(() => document.querySelector('#featPanel').hidden, null, { timeout: 5000 });
+  const errs = realErrs(vp).filter((e) => !/404|not found|Failed to load|tile|3D Tiles/i.test(e));
+  if (errs.length) throw new Error('viewer JS 错误: ' + errs.join(' ;; '));
+  await vp.close();
 });
 
 /* ---------- 10. responsive mobile ---------- */
@@ -582,11 +784,14 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     const dl = vp.waitForEvent('download', { timeout: 10000 }).catch(() => null);
     await vp.click('#shot');
     const d = await dl;
-    // headless 下下载事件偶发不可靠 → 以状态文本兜底
-    const okStatus = await vp.waitForFunction(() => /已保存截图|截图失败/.test(document.querySelector('#status').textContent),
-      null, { timeout: 10000 }).then((h) => h.jsonValue());
+    // headless 下下载事件偶发不可靠 → 以状态文本兜底。
+    // NOTE: waitForFunction 返回的是谓词布尔值，不是 #status 文本——旧写法把 true
+    // 当文本去正则匹配，下载事件一旦不触发就必然误报「既无下载也无成功状态」。
+    await vp.waitForFunction(() => /已保存截图|截图失败/.test(document.querySelector('#status').textContent),
+      null, { timeout: 15000 });
+    const statusText = await vp.textContent('#status');
     if (d && !/\.png$/.test(d.suggestedFilename())) throw new Error('下载名非 png: ' + d.suggestedFilename());
-    if (!d && !/已保存截图/.test(okStatus)) throw new Error('既无下载也无成功状态: ' + okStatus);
+    if (!d && !/已保存截图/.test(statusText)) throw new Error('无下载且未提示成功: ' + statusText);
   });
   await step('23 复位视角按钮可点击 + 移除图层生效', async () => {
     await vp.click('#home');

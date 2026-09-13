@@ -62,6 +62,27 @@ function addSimplify(a, s, { mesh = false } = {}) {
 }
 
 /**
+ * tiles: BIM property binding (MGOConsole `--bim-*`).  Values land in every
+ * b3dm Batch Table (Cesium feature.properties).  `--bim-props` implies bind
+ * on the engine side; the uploaded sidecar (io.bimPropsFile, staged as
+ * _bim_props.csv) wins over a server-local params path, mirroring the
+ * prj/cps precedence.  report=true writes a per-file transparency manifest
+ * next to that file's tileset (multi-file tiles keep separate stems, so the
+ * per-step io.out prevents later models from clobbering earlier reports).
+ */
+function addBim(a, bim, io) {
+  if (!bim) return;
+  if (bim.bind === true) a.push('--bim-bind');
+  const props = io.bimPropsFile ?? bim.propsPath;
+  if (props) a.push('--bim-props', props);
+  if (bim.idProperty) a.push('--bim-id-property', bim.idProperty);
+  if (bim.strategy) a.push('--bim-strategy', bim.strategy);
+  if (bim.report === true) a.push('--bim-report', path.join(io.out, 'bim_report.json'));
+  if (bim.noSceneMeta === true) a.push('--bim-no-scene-meta');
+  if (bim.noInherit === true) a.push('--bim-no-inherit');
+}
+
+/**
  * @param job    {type, params}
  * @param io     {input: string, out: string, cpsFile?: string}  absolute paths
  * @returns {string[]} argv after the binary, e.g. ['tiles','-i',...,'-o',...]
@@ -82,6 +103,7 @@ export function buildArgs(job, io) {
       addOrigin(a, p.origin);
       addGeoref(a, p.georef, { cpsFile: io.cpsFile });
       addSimplify(a, p.simplify);
+      addBim(a, p.bim, io);
       break;
 
     case 'terrain':

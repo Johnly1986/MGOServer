@@ -741,7 +741,16 @@ CMD ["node", "src/server.js"]
 | `outputFormat` | （`-o` 扩展名） | mesh | 白名单 obj/glb/fbx |
 | `sourceCrs` / `targetCrs` / `pretty` | `--source-crs/--target-crs/--pretty` | geojson | CRS 语法 |
 | `configCsv` | `-c` | mesh | 上传件 |
+| `bim.bind` | `--bim-bind` | tiles | bool；开启后构件属性写入每个 b3dm 的 Batch Table（Cesium `feature.properties`，查看器点击构件可查看） |
+| （`props` 上传件 / `bim.propsPath`） | `--bim-props` | tiles | CSV 首列=关联键（RFC4180）；上传件落盘 `input/_bim_props.csv`（保留名），优先于 `propsPath`；引擎侧隐含开启绑定 |
+| `bim.idProperty` | `--bim-id-property k1,k2` | tiles | 逗号分隔 ID 键；禁空格/前导 `-`；先场景元数据后属性表列 |
+| `bim.strategy` | `--bim-strategy` | tiles | enum ifc/fbx/gltf2/obj/3ds/generic，留空按导入器自动 |
+| `bim.report` | `--bim-report out/<stem>/bim_report.json` | tiles | bool；服务端按输入生成报告路径（多文件各写各目录互不覆盖），产物以 role `bimReport` 列出 |
+| `bim.noSceneMeta` | `--bim-no-scene-meta` | tiles | bool（仅外部属性表） |
+| `bim.noInherit` | `--bim-no-inherit` | tiles | bool（跳过祖先链继承） |
 | `verbose` | `-v` | terrain/osgb | 非 API 参数（schema 不接受）：服务恒开启，进度解析依赖引擎输出 |
+
+> `bim` 参数仅当引擎启动探测（`mgo tiles --help` 含 `--bim-bind`，capabilities `features.bimBinding`）判定支持时受理，否则 422 `ENGINE_NO_BIM`；不传 `bim` 时 argv 与旧管线逐字节一致（引擎的零影响承诺在服务器侧同样成立）。
 
 > 校验原则：**所有参数在 API 层完成 zod 校验，正常情况下不允许 exit 2（usage_error）到达子进程**；exit 2 一律视为映射表 bug，触发服务端告警（§5.4）。
 

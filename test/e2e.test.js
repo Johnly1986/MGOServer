@@ -452,6 +452,91 @@ test('multipart upload of .prj + .cps feeds the CLI argv', skip, async () => {
   assert.match(argvLine, /--georef multipos --cps \S+_controlpoints\.csv --fit-order 1/);
 });
 
+/* ---------------- tiles: BIM property binding channel ---------------- */
+
+test('tiles BIM binding via multipart: props sidecar feeds --bim-*, report artifact surfaces', skip, async () => {
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles',
+    bim: { bind: true, strategy: 'fbx', idProperty: 'ElementId', report: true, noInherit: true } }));
+  fd.append('file', new Blob(['FBXK'], { type: 'application/octet-stream' }), 'tower.fbx');
+  fd.append('props', new Blob(['ElementId,楼层,名称\nE-1,3,塔楼A\nE-2,4,塔楼B\n'],
+    { type: 'text/csv' }), 'ledger.csv');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  const txt = await r.text();
+  assert.equal(r.status, 201, txt);
+  const j = JSON.parse(txt);
+  const done = await waitTerminal(j.id);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${j.id}/log?tail=50`)).json();
+  const argvLine = lines.find((l) => l.startsWith('argv:'));
+  assert.ok(argvLine, 'fake binary logged argv');
+  assert.match(argvLine, /--bim-bind\b/);
+  assert.match(argvLine, /--bim-props \S+\/input\/_bim_props\.csv/);
+  assert.match(argvLine, /--bim-id-property ElementId/);
+  assert.match(argvLine, /--bim-strategy fbx/);
+  assert.match(argvLine, /--bim-no-inherit\b/);
+  assert.match(argvLine, /--bim-report \S+\/out\/tower\/bim_report\.json/);
+  // manifest produced by the (fake) engine → surfaced as a downloadable artifact
+  const rep = done.artifacts.find((a) => a.role === 'bimReport');
+  assert.ok(rep, 'bimReport artifact discovered');
+  assert.equal(rep.url, `/ws/${j.id}/out/tower/bim_report.json`);
+  const body = await (await fetch(base + rep.url)).json();
+  // 报告形态与真实引擎一致（instances/withSidecarRow/features[].matchSource）
+  assert.ok(body.withSidecarRow > 0, `sidecar rows in report: ${JSON.stringify(body)}`);
+  assert.ok((body.features ?? []).some((f) => f.matchSource === 'sidecar' || f.matchSource === 'merged'));
+});
+
+test('bim via JSON channel: server-local propsPath accepted inside roots (upload-name untouched)', skip, async () => {
+  const props = path.join(tmp, 'ledger2.csv');
+  await fsp.writeFile(props, 'Name,owner\nCubeA,acme\n');
+  const model = path.join(tmp, 'm1.fbx');
+  await fsp.writeFile(model, 'FBXK');
+  const { status, json } = await api('POST', '/api/v1/jobs',
+    { type: 'tiles', inputPath: model, bim: { propsPath: props, noSceneMeta: true } });
+  assert.equal(status, 201, JSON.stringify(json));
+  const done = await waitTerminal(json.id);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done.error));
+  const { lines } = await (await fetch(base + `/api/v1/jobs/${json.id}/log?tail=50`)).json();
+  const argvLine = lines.find((l) => l.startsWith('argv:'));
+  assert.match(argvLine, new RegExp(`--bim-props ${props.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(argvLine, /--bim-no-scene-meta/);
+  assert.ok(!argvLine.includes('--bim-bind'), 'props alone: engine implies bind; no duplicate flag');
+});
+
+test('bim propsPath outside allowed roots → 403', skip, async () => {
+  const { status } = await api('POST', '/api/v1/jobs',
+    { type: 'tiles', inputPath: path.join(tmp, 'm1.fbx'), bim: { propsPath: '/etc/passwd' } });
+  assert.equal(status, 403);
+});
+
+test('props sidecar rejected for non-tiles types; PROPS_EXT enforced', skip, async () => {
+  let fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'terrain' }));
+  fd.append('file', new Blob(['TIFF']), 'dem.tif');
+  fd.append('props', new Blob(['a,b\n1,2\n']), 'p.csv');
+  let r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  assert.equal(r.status, 422);
+  assert.equal((await r.json()).error.code, 'SIDE_CAR_UNSUPPORTED');
+
+  fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles', bim: { bind: true } }));
+  fd.append('file', new Blob(['FBXK']), 'a.fbx');
+  fd.append('props', new Blob(['xx']), 'ledger.json');
+  r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  assert.equal(r.status, 422);
+  assert.equal((await r.json()).error.code, 'PROPS_EXT');
+});
+
+test('_bim_props.csv is reserved and rejected as user content', skip, async () => {
+  const fd = new FormData();
+  fd.append('options', JSON.stringify({ type: 'tiles' }));
+  fd.append('file', new Blob(['FBXK']), 'a.fbx');
+  fd.append('file', new Blob(['Name,x\nCubeA,1\n']), '_bim_props.csv');
+  const r = await fetch(base + '/api/v1/jobs', { method: 'POST', body: fd });
+  assert.equal(r.status, 422);
+  assert.equal((await r.json()).error.code, 'RESERVED_NAME');
+});
+
 test('prj field with wrong extension rejected', skip, async () => {
   const fd = new FormData();
   fd.append('options', JSON.stringify({ type: 'tiles' }));
