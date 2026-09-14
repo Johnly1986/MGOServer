@@ -21,10 +21,11 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 
 ## 功能特性
 
-- 支持六类任务：模型转 3D Tiles、地形切片、影像切片、GeoJSON 坐标转换、模型简化转格式、OSGB 倾斜摄影（需以 MGO_WITH_OSG 编译）。
-- **BIM 属性绑定**：模型切片可开启属性绑定（IFC GUID / FBX·glTF 元数据 / 外部属性表 CSV），构件属性写入每个 b3dm 的 Batch Table；查看器中**点击构件即可查看属性**（高亮选中，可复制 JSON），并可选输出绑定透明度报告 `bim_report.json`（需引擎带 `--bim-*`，启动时自动探测，不支持则界面置灰）。
-- 坐标系投影支持 EPSG、WKT、+proj、.prj、 7 参数 Helmert、单锚点、多控制点配准。
-- 支持 Windows / Linux 双平台，Node.js 服务形态，自带 systemd unit；第三方前端通过 REST API 即可接入。
+-
+- **支持六类任务**：模型转 3D Tiles、地形切片、影像切片、GeoJSON 坐标转换、模型简化转格式、OSGB 倾斜摄影（需以 MGO_WITH_OSG 编译）。
+- **BIM 属性绑定**：模型切片可开启属性绑定（IFC GUID / FBX·glTF 元数据 / 外部属性表 CSV），构件属性写入每个 b3dm 的 Batch Table；，并可选输出绑定透明度报告 `bim_report.json`（MGO 0.75+以上版本）。
+- **坐标系投影支持**: EPSG、WKT、+proj、.prj、 7 参数 Helmert、单锚点、多控制点配准。
+- **支持平台**：支持 Windows / Linux ，Node.js 服务形态，自带 systemd unit；第三方前端通过 REST API 即可接入。
 
 ## 环境要求
 
@@ -84,7 +85,6 @@ npm i cesium@1.111 --no-save && npm run sync:cesium
 
 **开发自测**：`npm test`（无需构建 C++ 引擎）、
 `npm run test:ui`（Chromium 页面级回归）、
-`npm run test:bim`（BIM 属性绑定交叉验证：服务端 `buildArgs` 生成的 argv → 真实 MGOConsole → 解码 b3dm Batch Table，核对侧表列与值；需带 `--bim-*` 的引擎与真实模型，可用 `--model` 指定）、
 `npm run dev`（热重载）。
 
 ## 📄 许可
