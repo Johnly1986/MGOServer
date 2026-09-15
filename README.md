@@ -21,11 +21,10 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 
 ## 功能特性
 
--
-- **支持六类任务**：模型转 3D Tiles、地形切片、影像切片、GeoJSON 坐标转换、模型简化转格式、OSGB 倾斜摄影（需以 MGO_WITH_OSG 编译）。
-- **BIM 属性绑定**：模型切片可开启属性绑定（IFC GUID / FBX·glTF 元数据 / 外部属性表 CSV），构件属性写入每个 b3dm 的 Batch Table；，并可选输出绑定透明度报告 `bim_report.json`（MGO 0.75+以上版本）。
-- **坐标系投影支持**: EPSG、WKT、+proj、.prj、 7 参数 Helmert、单锚点、多控制点配准。
-- **支持平台**：支持 Windows / Linux ，Node.js 服务形态，自带 systemd unit；第三方前端通过 REST API 即可接入。
+- 支持六类任务：模型转 3D Tiles、地形切片、影像切片、GeoJSON 坐标转换、模型简化转格式、OSGB 倾斜摄影（需以 MGO_WITH_OSG 编译）。
+- **BIM 属性绑定**：模型切片可开启属性绑定（IFC GUID / FBX·glTF 元数据 / 外部属性表 CSV），构件属性写入每个 b3dm 的 Batch Table；查看器中**点击构件即可查看属性**（高亮选中，可复制 JSON），并可选输出绑定透明度报告 `bim_report.json`（需引擎带 `--bim-*`，启动时自动探测，不支持则界面置灰）。
+- 坐标系投影支持 EPSG、WKT、+proj、.prj、 7 参数 Helmert、单锚点、多控制点配准。
+- 支持 Windows / Linux 双平台，Node.js 服务形态，自带 systemd unit；第三方前端通过 REST API 即可接入。
 
 ## 环境要求
 
@@ -85,7 +84,41 @@ npm i cesium@1.111 --no-save && npm run sync:cesium
 
 **开发自测**：`npm test`（无需构建 C++ 引擎）、
 `npm run test:ui`（Chromium 页面级回归）、
+`npm run test:bim`（BIM 属性绑定交叉验证：服务端 `buildArgs` 生成的 argv → 真实 MGOConsole → 解码 b3dm Batch Table 核对侧表列与值 → **用真浏览器 + 真 Cesium 的 `parseBatchTable` 逐瓦片验证可解析性**；需带 `--bim-*` 的引擎与真实模型，可用 `--model` 指定）、
+`npm run test:b3dm -- <文件或目录>`（单独用 Cesium 的 `parseBatchTable` 体检任意 b3dm 的 Batch Table，自带静态服务，无需先启动服务）、
 `npm run dev`（热重载）。
+
+## 已知问题
+
+- **历史 `.glb` 产物无法预览**：Cesium（≥1.100）只解析 glTF 2.0，而旧版引擎走 assimp 的
+  glTF 1.0 导出器（注册名为 `glb`/`gltf`）。本仓库内置的引擎已修正（改用 `glb2`/`gltf2`），
+  新转换的模型都是 glTF 2.0、可在查看器中直接预览；**旧引擎产出的历史 `.glb`** 仍无法预览——
+  服务会探测产物 glTF 版本，在任务列表标 ⚠ 说明原因并**不再给出「查看」链接**（产物仍可下载）。
+- **历史带属性绑定的 3D Tiles 无法预览**：旧引擎把 Batch Table 二进制列的 `componentType`
+  写成 glTF 数字枚举，Cesium 解析即抛 `Cannot read properties of undefined`（详见下方第 4 条）。
+  服务在任务完成时会抽检产出的 b3dm，发现这种产物就在任务列表标 ⚠ 并**不再给出「查看」链接**
+  （`viewer` 缺省、`batchTableComponentType: "numeric"`，产物仍可下载），用已修复的引擎
+  **重新转换**即可正常预览。
+- **引擎侧四处已修复的缺陷**（内置 Linux 引擎已含修复，自行构建引擎时请同步）：
+  1. `FBXExporter` SIGFPE：简化器重建 UV 数组后未声明分量数（`mNumUVComponents`），
+     FBX 导出器按它做整数除法 → 除零崩溃。现 `mesh -o *.fbx` 正常。
+  2. assimp glTF2 `MergeMeshes()` 堆损坏：多网格节点导出 `.glb`/`.gltf` 时释放后使用
+     （`double free or corruption`）。修复以补丁形式随引擎仓库分发
+     （`ThirdParty/patches/assimp-v6.0.5-glTF2-merge-meshes.patch`，CMake 构建时自动应用）。
+  3. 外部贴图路径：FBX 材质里存的是 Windows 绝对路径（`E:\...\zhuipo.png`），Linux 下
+     `path::filename()` 不按 `\` 拆分，贴图既不会被复制、glTF 里也留下不可用路径 → 查看器
+     报贴图加载失败。现导出 `.glb`/`.gltf` 时把贴图改为 basename 并复制到输出目录（如
+     `root.glb` 旁生成 `zhuipo.png`），查看器按相对 URI 正常加载。
+  4. **Batch Table 二进制列的 `componentType` 写成了 glTF 数字枚举**（5124/5126/5128），
+     而 3D Tiles 规范与 CesiumJS 要求字符串枚举（`"INT"`/`"FLOAT"`/`"DOUBLE"`）。Cesium
+     的 `parseBatchTable` 用字符串 switch 解析 → 组件类型变 `undefined` →
+     `createArrayBufferView(undefined,…)` 读 `undefined.buffer` → **开启属性绑定的 b3dm
+     全部加载失败**（查看器报 `Cannot read properties of undefined (reading 'buffer')`）。
+     现改为规范字符串枚举。该缺陷此前未被发现，是因为自写解码器按数字枚举解析恰好自洽；
+     自测链路已补上「用真 Cesium 解析」这一步（`npm run test:bim` 末尾 + `test:b3dm`）。
+     **注意**：升级引擎后，旧引擎产出的带属性绑定 b3dm 仍需**重新转换**才能预览。
+- **外部贴图随产物单独落盘**：`.glb`/`.gltf` 引用同目录贴图（非自包含）。查看器通过
+  `/ws/{job}/out/` 数据面按相对路径取到贴图；若只单独下载 `.glb` 需一并下载同名贴图。
 
 ## 📄 许可
 

@@ -14,7 +14,8 @@
     "test:ui": "node ui-test.mjs",
     "test:bim": "node scripts/cross-validate-bim.mjs",
     "fixture:terrain": "python3 scripts/generate-test-tif.py test/fixtures",
-    "sync:cesium": "node scripts/sync-cesium.mjs"
+    "sync:cesium": "node scripts/sync-cesium.mjs",
+    "test:b3dm": "node scripts/probe-b3dm-batchtable.mjs"
   },
   "repository": {
     "type": "git",

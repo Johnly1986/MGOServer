@@ -662,6 +662,34 @@ test('osgb zip with no files rejected', skip, async () => {
   assert.equal((await r.json()).error.code, 'EMPTY_ZIP');
 });
 
+test('engine crash → ENGINE_CRASH with signal name (not a bare exit code)', skip, async () => {
+  // 真实引擎在 FBX 导出等路径会以信号死亡（SIGFPE）；服务必须给出可读诊断，
+  // 而不是把 -1 / 136 这种数字丢给用户。两条路径都要覆盖：
+  //   1) 真信号（runner 报 signal，exitCode -1）
+  //   2) 壳层包装成 128+N 的退出码（无 signal），退回查表命名
+  const tif = path.join(tmp, 'crash.tif');
+  await fsp.writeFile(tif, 'x');
+
+  process.env.FAKE_SIGNAL = 'FPE';
+  try {
+    const r = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: tif });
+    const done = await waitTerminal(r.json.id);
+    assert.equal(done.status, 'failed');
+    assert.equal(done.error.code, 'ENGINE_CRASH');
+    assert.match(done.error.message, /SIGFPE/);
+    assert.ok(!/exited with code/.test(done.error.message), '不该再是裸退出码文案');
+  } finally { delete process.env.FAKE_SIGNAL; }
+
+  process.env.FAKE_EXIT = '136';   // 壳层风格的 128+N，无 signal
+  try {
+    const r = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: tif });
+    const done = await waitTerminal(r.json.id);
+    assert.equal(done.error.code, 'ENGINE_CRASH');
+    assert.match(done.error.message, /SIGFPE/);
+    assert.match(done.error.message, /exit 136/);
+  } finally { delete process.env.FAKE_EXIT; }
+});
+
 test('conversion failure (exit 1) → failed with log tail', skip, async () => {
   process.env.FAKE_EXIT = '1';
   try {

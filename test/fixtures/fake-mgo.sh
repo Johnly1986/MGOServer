@@ -4,7 +4,8 @@
 #   [Module] Progress: X/Y      [Module] Done: ...
 # Knobs (env): FAKE_EXIT (default 0), FAKE_SLEEP (default 0.05),
 #              FAKE_STALL (long sleep after artifacts, for timeout tests),
-#              FAKE_B3DM (path to a real batch-table b3dm: the tiles branch
+#              FAKE_SIGNAL (e.g. FPE/SEGV: die by that signal instead of exiting,
+#              for ENGINE_CRASH diagnostics), FAKE_B3DM (path to a real batch-table b3dm: the tiles branch
 #              embeds it instead of the 'b3d0' stub, so a viewer can pick
 #              features end-to-end without the C++ engine)
 set -u
@@ -117,4 +118,10 @@ EOF
 esac
 
 [[ -n "${FAKE_STALL:-}" ]] && sleep "$FAKE_STALL"
+# Signal death (shell reports 128+N): mirrors a crashing engine binary so the
+# service's ENGINE_CRASH path is exercised end-to-end.
+if [ -n "${FAKE_SIGNAL:-}" ]; then
+  kill -s "$FAKE_SIGNAL" $$
+  sleep 1
+fi
 exit "${FAKE_EXIT:-0}"

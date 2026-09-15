@@ -176,7 +176,14 @@ async function addLayer(type, url) {
     updateBar();
   } catch (e) {
     console.error(e);
-    setStatus(`加载失败 (${type}): ${e.message}`, 'err');
+    // 模型图层最常见的失败是 glTF 1.0 产物（Cesium ≥1.100 只支持 2.0，报错是
+    // "Failed to load model … reading 'buffer'/'extras'" 这类内部异常，用户看不出
+    // 所以然）——补一句可操作提示，别让人对着一串堆栈猜。
+    const hint = (type === 'model' && /\.(glb|gltf)(\?|$)/i.test(url)
+      && /Failed to load model|glTF|reading 'buffer'|reading 'extras'/i.test(String(e?.message ?? '')))
+      ? ' — 该模型不是 glTF 2.0（旧版引擎导出的是已废弃的 glTF 1.0，Cesium 无法解析）；请用支持 glTF 2.0 导出的 MGO 引擎重新执行「模型简化」任务'
+      : '';
+    setStatus(`加载失败 (${type}): ${e.message}${hint}`, 'err');
   }
 }
 

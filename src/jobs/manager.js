@@ -13,6 +13,13 @@ const TAIL_CAP = 30;         // stderr/log tail kept for error reporting
 
 export const TERMINAL = new Set(['succeeded', 'failed', 'canceled', 'usage_error']);
 
+/** 128+N exit code → signal name (shell convention), for crash diagnostics. */
+const SIGNALS = {
+  129: 'SIGHUP', 130: 'SIGINT', 131: 'SIGQUIT', 132: 'SIGILL', 134: 'SIGABRT',
+  135: 'SIGBUS', 136: 'SIGFPE', 137: 'SIGKILL', 138: 'SIGUSR1', 139: 'SIGSEGV',
+  141: 'SIGPIPE', 143: 'SIGTERM',
+};
+
 function httpError(status, message, code) {
   return Object.assign(new Error(message), { statusCode: status, errCode: code });
 }
@@ -502,6 +509,24 @@ export class JobManager extends EventEmitter {
         exitCode: 2,
         error: { code: 'USAGE_ERROR', message: `mgo rejected the arguments (service mapping bug?)${where}`,
           logTail: job._tail.slice(-15) },
+      });
+      return this.persist(job);
+    }
+    // Signal death: the runner reports `signal` (exitCode -1); a shell wrapper
+    // reports 128+N.  Either way "exited with code -1/136" tells a user
+    // nothing — name the signal and point at the log (e.g. FBX export in the
+    // current engine dies with SIGFPE for every model tested, while
+    // glTF/OBJ/PLY export fine).
+    const sigName = res.signal
+      ?? (res.exitCode > 128 ? (SIGNALS[res.exitCode] ?? `signal ${res.exitCode - 128}`) : null);
+    if (sigName) {
+      this.setStatus(job, 'failed', {
+        exitCode: res.exitCode,
+        error: {
+          code: 'ENGINE_CRASH',
+          message: `mgo 引擎异常终止（${sigName}${res.exitCode > 0 ? `，exit ${res.exitCode}` : ''}）${where} —— 多为引擎内部缺陷（特定输入/输出格式触发崩溃），请连同 run.log 反馈；换一种输出格式或参数通常可绕开`,
+          logTail: job._tail.slice(-15),
+        },
       });
       return this.persist(job);
     }

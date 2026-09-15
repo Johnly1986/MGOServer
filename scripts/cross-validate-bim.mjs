@@ -80,13 +80,39 @@ function columnValues(bt, key) {
   }
   return null;
 }
+/** 3D Tiles Batch Table 二进制列的 componentType 是字符串枚举（规范 Table 格式），
+ *  不是 glTF accessor 的数字枚举。历史上引擎写成了 5124/5126/5128，CesiumJS
+ *  parseBatchTable 用字符串 switch 解析 → 组件类型 undefined → 读 undefined.buffer
+ *  → 整个 b3dm 加载失败。这里以规范字符串为准，同时识别数字以便定位旧产物。 */
+const COMPONENT_TYPES = {
+  BYTE: 5120, UNSIGNED_BYTE: 5121, SHORT: 5122, UNSIGNED_SHORT: 5123,
+  INT: 5124, UNSIGNED_INT: 5125, FLOAT: 5126, DOUBLE: 5128,
+};
+function componentTypeOf(meta) {
+  if (typeof meta.componentType === 'string') return COMPONENT_TYPES[meta.componentType];
+  return meta.componentType;   // 数字：非规范写法，仅用于解码旧产物
+}
+/** Batch Table 里的二进制列描述符（对象形态或 array+bin 的逐行引用形态）。 */
+function binaryDescriptors(bt) {
+  const out = [];
+  for (const [key, col] of Object.entries(bt)) {
+    if (Array.isArray(col)) {
+      for (const v of col) {
+        if (v && typeof v === 'object' && v.byteOffset !== undefined) { out.push([key, v]); break; }
+      }
+    } else if (col && typeof col === 'object' && col.byteOffset !== undefined) {
+      out.push([key, col]);
+    }
+  }
+  return out;
+}
 /** array 形态 + binary body 的数值列 → 解码（float/int 标量） */
 function decodeBinaryColumn(bt, btBin, i) {
   const refs = Object.entries(bt).filter(([, v]) => Array.isArray(v) && v[i] && typeof v[i] === 'object' && v[i].byteOffset !== undefined);
   const out = {};
   for (const [key, arr] of refs) {
     const meta = arr[i];
-    const ct = meta.componentType;
+    const ct = componentTypeOf(meta);
     const byteLen = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }[ct] ?? 1;
     let val;
     try {
@@ -245,6 +271,40 @@ async function main() {
     const binCols = decodeBinaryColumn(bt, btBin, idx);
     console.log(`  二进制列解码: ${JSON.stringify(binCols).slice(0, 200)}`);
   }
+
+  /* ---------- 6. Cesium 可解析性：componentType 必须是规范字符串枚举 ---------- */
+  // 回归防线：CesiumJS（1.111）的 parseBatchTable 只认 "INT"/"FLOAT"/"DOUBLE" 这类
+  // 字符串；写成 glTF 数字枚举时组件类型解析为 undefined，b3dm 在浏览器里直接报
+  // "Cannot read properties of undefined (reading 'buffer')"。
+  step('Batch Table 规范合规（Cesium parseBatchTable 可解析）');
+  const descs = [];
+  for (const fp of b3dms.slice(0, 60)) {
+    const d = decodeB3dm(fs.readFileSync(fp));
+    for (const [key, meta] of binaryDescriptors(d.bt)) descs.push([path.relative(out2, fp), key, meta]);
+  }
+  check(descs.length > 0, `二进制列描述符存在（${descs.length} 个），componentType 有实际校验对象`);
+  const badType = descs.filter(([, , m]) => typeof m.componentType !== 'string');
+  check(badType.length === 0,
+    '二进制列 componentType 使用 3D Tiles 字符串枚举（非 glTF 数字枚举）',
+    badType.slice(0, 4).map(([f, k, m]) => `${f} ${k}=${JSON.stringify(m.componentType)}`).join('; '));
+  const unknownType = descs.filter(([, , m]) => typeof m.componentType === 'string' && !(m.componentType in COMPONENT_TYPES));
+  check(unknownType.length === 0, 'componentType 取值在规范枚举内',
+    unknownType.slice(0, 4).map(([f, k, m]) => `${f} ${k}=${m.componentType}`).join('; '));
+  const sample = descs.slice(0, 3).map(([, k, m]) => `${k}={"componentType":"${m.componentType}","type":"${m.type}"}`);
+  console.log(`  样例: ${sample.join(' | ')}`);
+
+  /* ---------- 7. Cesium 实机解析（真浏览器 + 真 Cesium.js） ---------- */
+  // 上面只证明「字节按我们的理解排布」；这一步用 Cesium 自己的 parseBatchTable
+  // 证明「Cesium 也能读懂」。componentType 数字枚举的回归正是在这里被拦住。
+  step('Cesium 实机解析：parseBatchTable');
+  const probe = await run(process.execPath,
+    [path.join(ROOT, 'scripts', 'probe-b3dm-batchtable.mjs'), out2],
+    { cwd: ROOT, maxBuffer: 256 * 1024 * 1024 });
+  const probeTail = (probe.out || probe.errOut || '').trim().split('\n');
+  const summary = probeTail.filter((l) => /Cesium |均可|无法被|FAIL|probe failed/.test(l)).slice(-8);
+  summary.forEach((l) => console.log('  ' + l));
+  check(probe.code === 0, 'Cesium parseBatchTable 可解析全部 b3dm（Batch Table 规范合规）',
+    probe.code === 0 ? '' : probeTail.slice(-12).join('\n        '));
   // 报告逐构件标注命中来源：只配侧表时是 sidecar；场景元数据与侧表都在时是
   // merged（侧表覆盖同名场景列）——两者都算「可追溯」。
   const srcCount = {};

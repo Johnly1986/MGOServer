@@ -334,3 +334,6 @@
   @media (prefers-reduced-motion: reduce) {
     .modal, .modal .dialog { animation:none; }
   }
+
+/* 产物带 warning（如 glTF 1.0 无法预览）：操作列里的可悬停提示 */
+.warnTip { color:var(--warn); cursor:help; font-size:13px; margin-right:4px; }

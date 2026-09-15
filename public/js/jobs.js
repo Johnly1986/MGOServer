@@ -27,6 +27,10 @@ const fmtPct = (j) => {
 export function row(j) {
   const viewer = j.viewerUrl
     ? `<a class="btn" href="${esc(j.viewerUrl)}" target="_blank" title="在查看器中打开">查看</a>` : '';
+  // 产物带 warning（例如 glTF 1.0 无法被 Cesium 预览）时用 ⚠ 说明「为什么没有
+  // 查看按钮」，而不是让用户对着少一个按钮的界面猜。
+  const warn = (j.artifacts || []).find((a) => a.warning);
+  const warnTip = warn ? `<span class="warnTip" title="${esc(warn.warning)}">⚠</span>` : '';
   const cancel = ['queued', 'running'].includes(j.status) ? `<button class="danger" data-act="cancel" title="取消任务">取消</button>` : '';
   return `<tr data-id="${j.id}"${j.id === logJobId ? ' class="cur"' : ''}>
     <td><span class="jobId" data-copy="${j.id}" title="点击复制完整 ID">${j.id.slice(0, 8)}</span><span class="tRel">${fmtAgo(j.createdAt)}</span></td>
@@ -34,7 +38,7 @@ export function row(j) {
     <td><span class="badge s-${j.status}">${STATUS_CN[j.status] || j.status}</span></td>
     <td>${fmtPct(j)}</td>
     <td class="c-input"><span class="inName" title="${esc(j.error ? j.error.code + ': ' + j.error.message : j.inputName || '')}">${esc(j.inputName || '')}</span></td>
-    <td><div class="act">${viewer}<button data-act="log" title="查看日志">日志</button>${cancel}<button class="danger" data-act="del" title="删除任务与产物">删除</button></div></td>
+    <td><div class="act">${warnTip}${viewer}<button data-act="log" title="查看日志">日志</button>${cancel}<button class="danger" data-act="del" title="删除任务与产物">删除</button></div></td>
   </tr>`;
 }
 export function render() {
