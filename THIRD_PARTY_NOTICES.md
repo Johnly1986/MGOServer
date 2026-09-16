@@ -23,6 +23,7 @@ suite, [yazl](https://github.com/thejoshwolfe/yazl) (MIT) to build the test arch
 |-----------|---------|---------|-------|
 | [CesiumJS](https://cesium.com/platform/cesiumjs/) | 1.111 | Apache-2.0 | Pinned to match the quantized-mesh decoder calibration in TerrainConverter. `npm run sync:cesium` copies `node_modules/cesium/Build/Cesium` into `public/cesium/` (gitignored); otherwise the viewer loads the same version from the CDN. |
 | Esri World Imagery / World Street Map, OpenStreetMap, CARTO, OpenTopoMap tiles | — | see each provider | Optional online basemaps in the viewer HUD, fetched by the browser directly from the tile providers; attribution is rendered automatically and usage remains subject to each provider's policy. |
+| [Re:Earth Terrain](https://terrain.reearth.land/) global quantized-mesh terrain（Mapterhorn DEM + EGM2008） | — | see provider | Optional online terrain in the viewer HUD（`terrain.reearth.land`）, fetched by the browser directly; attribution is rendered in the HUD credit line and usage remains subject to the provider's policy. |
 
 ## The MGO binary
 

@@ -328,7 +328,7 @@ sequenceDiagram
 | DELETE | `/api/v1/jobs/{id}` | 删除任务及其工作区 |
 | GET | `/api/v1/jobs/{id}/artifacts` | 产物清单（含 Cesium 接入 URL 与推荐图层类型） |
 | GET | `/ws/{jobId}/out/**` | **数据面**：产物静态资源（CesiumJS 直接消费） |
-| GET | `/viewer.html?asset={url}&type={3dtiles\|terrain\|imagery\|geojson\|model}` | 打开渲染页 |
+| GET | `/viewer.html?asset={url}&type={3dtiles\|terrain\|imagery\|geojson\|model}[&basemap=&terrain=]` | 打开渲染页（`terrain=reearth` 可选加载全球在线地形） |
 | GET | `/console.html` | 任务控制台 |
 
 ### 6.3 创建任务
@@ -593,6 +593,8 @@ const LOADERS = {
 ```
 
 页面行为：读 `?asset=&type=` 自动加载；图层面板可叠加多产物（例如 terrain + imagery + tiles 同屏，正是 M1 交付验收视图）；状态栏显示 `tileset.debugShowBoundingVolume` 调试开关；提供"复制图层配置 JSON"按钮方便第三方集成。
+
+在线地形（viewer HUD 可开关，`public/js/terrains.js` 注册表）：除本地任务地形外，还可加载免费公开的全球 quantized-mesh 服务——re:Earth 全球地形（`https://terrain.reearth.land/cesium-mesh/ellipsoid/`，layer.json 声明 `quantized-mesh-1.0` / `scheme: tms` / `projection: EPSG:4326` / 0–14 级 / `octvertexnormals`+`watermask`，服务端 CORS 全开），用 `CesiumTerrainProvider.fromUrl(url, { requestVertexNormals: true, requestWaterMask: true })` 直连，两个扩展内嵌瓦片内不产生额外请求。terrainProvider 是地球级单例，仲裁优先级固定为 **本地任务地形 > 在线地形 > 平滑椭球**：本地图层移除后自动回落到所选在线地形；深链 `?terrain=reearth` 可直达。
 
 ### 9.3 坐标约定红线（必须写进前端文档）
 

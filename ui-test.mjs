@@ -836,6 +836,54 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     }
   });
 
+  /* ---------- 24b. free online global terrain (re:Earth quantized-mesh) ---------- */
+  await step('24b 在线地形：优先级让位/回落 re:Earth 全球 quantized-mesh + 瓦片请求', async () => {
+    // 内网/防火墙环境在线地形源不可达 → 先探可达性，不可达按 SKIP 处理
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 4000);
+      const probe = await fetch('https://terrain.reearth.land/cesium-mesh/ellipsoid/layer.json', { signal: ctl.signal });
+      clearTimeout(t);
+      if (!probe.ok) skip(`在线地形源不可达（HTTP ${probe.status}），跳过外网地形断言`);
+    } catch (e) { if (e?.__skip) throw e; skip('无外网（在线地形源不可达），跳过外网地形断言'); }
+    let ot;
+    try {
+      // 深链：本地任务地形 + ?terrain=reearth 同时打开 → 验证「本地 > 在线 > 椭球」优先级
+      ot = await newPage('/viewer.html?asset=' + encodeURIComponent('/ws/' + jobId + '/out')
+        + '&type=terrain&terrain=reearth&basemap=none');
+      const reqs = [];
+      ot.on('request', (r) => { if (/terrain\.reearth\.land/.test(r.url())) reqs.push(r.url()); });
+      await ot.waitForFunction(() => /已加载/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
+      // 本地地形接管 provider：在线地形不得生效（归属行无 Mapterhorn）
+      await ot.waitForFunction(() => document.querySelector('#credit') !== null, null, { timeout: 10000 });
+      await ot.waitForTimeout(2000);
+      if ((await ot.textContent('#credit')).includes('Mapterhorn')) {
+        throw new Error('本地任务地形加载后在线地形归属仍在（优先级失效）');
+      }
+      // 移除本地地形 → 回落到所选在线地形（provider 换成 CesiumTerrainProvider + 拉真实 .terrain）
+      await ot.click('#layerList li .rm');
+      await ot.waitForFunction(() => {
+        const tp = window.__mgoViewer?.scene?.terrainProvider;
+        return tp && tp instanceof window.Cesium.CesiumTerrainProvider
+          && tp.tilingScheme instanceof window.Cesium.GeographicTilingScheme;   // layer.json: EPSG:4326
+      }, null, { timeout: 30000 });
+      await ot.waitForFunction(() => document.querySelector('#credit').textContent.includes('Mapterhorn'));
+      await ot.waitForFunction(() => /在线地形：/.test(document.querySelector('#status').textContent));
+      await ot.waitForTimeout(5000);
+      if (!reqs.some((u) => /\.terrain(\?|$)/.test(u))) throw new Error('未发起 .terrain 瓦片请求: ' + reqs.slice(0, 3).join(' ; '));
+      // 切回「无」→ 回落平滑椭球
+      await ot.selectOption('#terrain', 'none');
+      await ot.waitForFunction(() => {
+        const tp = window.__mgoViewer?.scene?.terrainProvider;
+        return tp && tp instanceof window.Cesium.EllipsoidTerrainProvider;
+      }, null, { timeout: 10000 });
+      await ot.waitForFunction(() => /在线地形：无/.test(document.querySelector('#status').textContent));
+      if (realErrs(ot).length) throw new Error('在线地形 JS 错误: ' + realErrs(ot).join(' ;; '));
+    } finally {
+      await ot?.close();   // WebGL 循环泄漏会饿死后续步骤
+    }
+  });
+
   /* ---------- 26. FilePicker 组件：上传 ↔ 服务器路径（弹框增强版） ---------- */
 await step('26 FilePicker：模式切换 + 跨目录多选/过滤/面包屑 + 路径提交', async () => {
   const cap = await (await fetch(BASE + '/api/v1/capabilities')).json();

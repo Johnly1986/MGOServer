@@ -1,9 +1,10 @@
 /**
  * Cesium 查看器主脚本。
- * 结构：引擎加载 → Viewer 装配 → 底图 → 五类图层 loader → 点击拾取属性 → 深链。
+ * 结构：引擎加载 → Viewer 装配 → 底图 → 在线地形 → 五类图层 loader → 点击拾取属性 → 深链。
  */
 import { $, el, esc, copyText } from './dom.js';
 import { BASE_MAPS } from './basemaps.js';
+import { ONLINE_TERRAINS } from './terrains.js';
 
 /**
  * Cesium base: prefer self-hosted /cesium/ (design §9.1, pinned 1.111),
@@ -27,6 +28,9 @@ loadCss(base + 'Widgets/widgets.css');
 await loadScript(base + 'Cesium.js');
 const Cesium = window.Cesium;
 $('#boot').classList.add('off');
+
+// deep-link 参数：/viewer.html?asset=&type=&basemap=&terrain=（§9.2）
+const q = new URLSearchParams(location.search);
 
 /**
  * No ion token / no external services: bare ellipsoid globe. MGO products
@@ -53,24 +57,86 @@ function setStatus(text, kind = '') {
 }
 
 let baseLayer = null;   // current base imagery layer (or null = plain globe)
+let baseCredit = '';    // current base imagery attribution
+
+/* ---------------- 在线地形（免费公开全球 quantized-mesh，可关） ----------------
+ * terrainProvider 是「地球级」单例，同一时刻只有一个生效。优先级固定：
+ * 本地任务地形（layers 中 type==='terrain'） > 在线地形（terrainSel） > 平滑椭球。
+ * 本地图层移除后自动回落到所选在线地形（若有），不会把用户选择静默吞掉。 */
+let terrainSel = q.get('terrain') || 'none';   // HUD 选择：'none' 或 ONLINE_TERRAINS 键
+let onlineTerrain = null;                      // 已就绪的在线地形 { key, provider }
 
 /** Sun-lighting pass is only useful on the plain globe (terrain relief);
  *  when a base imagery layer is active the imagery carries its own shading,
  *  so lighting is switched off to keep tiles bright. */
 function syncLighting() {
-  const hasTerrain = layers.some((l) => l.type === 'terrain');
+  const hasTerrain = layers.some((l) => l.type === 'terrain') || terrainSel !== 'none';
   viewer.scene.globe.enableLighting = !baseLayer && hasTerrain;
   if (!baseLayer) {
     viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString(hasTerrain ? '#3a4a5e' : '#1d2733');
   }
 }
 
+/** 归属行 = 底图 + 在线地形（本地任务地形是本服务产物，无外部归属）。 */
+function updateCredit() {
+  const t = onlineTerrain && !layers.some((l) => l.type === 'terrain')
+    ? ONLINE_TERRAINS[onlineTerrain.key]?.credit ?? ''
+    : '';
+  $('#credit').textContent = [baseCredit, t].filter(Boolean).join(' · ');
+}
+
+/** 让 terrainProvider 与上面的优先级保持一致（切换选择 / 移除本地地形时调用）。 */
+async function applyTerrain() {
+  const globe = viewer.scene.globe;
+  if (layers.some((l) => l.type === 'terrain')) {   // 本地任务地形加载时已接管 provider
+    globe.depthTestAgainstTerrain = true;
+    syncLighting(); updateCredit();
+    if (ONLINE_TERRAINS[terrainSel]) setStatus(`已选在线地形：${ONLINE_TERRAINS[terrainSel].label}（待本地地形图层移除后生效）`);
+    return;
+  }
+  const key = terrainSel, src = ONLINE_TERRAINS[key];
+  if (!src) {
+    onlineTerrain = null;
+    viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+    globe.depthTestAgainstTerrain = false;
+    syncLighting(); updateCredit();
+    setStatus('在线地形：无（平滑椭球）');
+    return;
+  }
+  if (onlineTerrain?.key === key) {
+    viewer.scene.terrainProvider = onlineTerrain.provider;   // 已就绪，直接切回
+  } else {
+    setStatus(`加载在线地形：${src.label}…`);
+    try {
+      // octvertexnormals / watermask 扩展内嵌在 .terrain 瓦片二进制里，
+      // 打开解码不产生额外请求（服务端 layer.json 的 extensions 已声明两者）。
+      const tp = await Cesium.CesiumTerrainProvider.fromUrl(src.url, {
+        requestVertexNormals: true,
+        requestWaterMask: true,
+      });
+      if (terrainSel !== key || layers.some((l) => l.type === 'terrain')) return;   // 等待期间优先级已变
+      onlineTerrain = { key, provider: tp };
+      viewer.scene.terrainProvider = tp;
+    } catch (e) {
+      console.error(e);
+      setStatus(`在线地形加载失败：${e.message}`, 'err');
+      terrainSel = 'none'; $('#terrain').value = 'none';
+      return applyTerrain();
+    }
+  }
+  globe.depthTestAgainstTerrain = true;
+  syncLighting(); updateCredit();
+  setStatus(`在线地形：${src.label}`, 'ok');
+}
+
+$('#terrain').addEventListener('change', () => { terrainSel = $('#terrain').value; applyTerrain(); });
+
 function setBaseMap(key) {
   if (baseLayer) { viewer.imageryLayers.remove(baseLayer, true); baseLayer = null; }
   const src = BASE_MAPS[key];
-  $('#credit').textContent = '';
+  baseCredit = '';
   if (!src) {
-    syncLighting();
+    syncLighting(); updateCredit();
     setStatus('底图：无（纯色地球）');
     return;
   }
@@ -81,13 +147,13 @@ function setBaseMap(key) {
   });
   baseLayer = viewer.imageryLayers.addImageryProvider(provider);
   syncLighting();
-  $('#credit').textContent = src.credit;
+  baseCredit = src.credit;
+  updateCredit();
   setStatus(`底图：${src.label}`);
 }
 $('#basemap').addEventListener('change', () => setBaseMap($('#basemap').value));
 
 // ---------------- loaders (design §9.2) ----------------
-const q0 = new URLSearchParams(location.search);
 const layers = [];
 const LOADERS = {
   '3dtiles': async (url) => {
@@ -153,7 +219,7 @@ const LOADERS = {
   'model': async (url) => {
     // Local-model preview placement (mesh jobs are not georeferenced):
     // default spot near Hangzhou; override via ?lon=&lat= in the URL.
-    const lon = Number(q0.get('lon')) || 120.0, lat = Number(q0.get('lat')) || 30.0;
+    const lon = Number(q.get('lon')) || 120.0, lat = Number(q.get('lat')) || 30.0;
     const e = viewer.entities.add({
       position: Cesium.Cartesian3.fromDegrees(lon, lat, 50),
       model: { uri: url, scale: 1 },
@@ -170,6 +236,8 @@ async function addLayer(type, url) {
     const L = await LOADERS[type](url);
     L.url = url; L.type = type;
     layers.push(L);
+    // 图层入列后再刷新归属/光照：本地地形此时才算接管 provider（在线地形归属让位）
+    updateCredit();
     renderList();
     await L.fit?.();
     setStatus(`已加载: ${L.name}`, 'ok');
@@ -203,15 +271,16 @@ function updateBar() { $('#layerCount').textContent = layers.length; }
 function removeLayer(i) {
   const l = layers[i];
   closeFeaturePanel();   // 面板里可能正引用被删图层的要素，先关再摘
-  if (l.type === 'terrain') {
-    viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-    viewer.scene.globe.depthTestAgainstTerrain = false;
+  if (l.type !== 'terrain') {   // 地形 provider 无处挂载，无需摘除；由 applyTerrain 统一切换
+    if (l.layer) viewer.imageryLayers.remove(l.obj, true);
+    else if (l.obj && viewer.dataSources.contains(l.obj)) viewer.dataSources.remove(l.obj, true);
+    else if (l.obj) { viewer.scene.primitives.remove(l.obj); viewer.entities.remove(l.obj); }
   }
-  else if (l.layer) viewer.imageryLayers.remove(l.obj, true);
-  else if (l.obj && viewer.dataSources.contains(l.obj)) viewer.dataSources.remove(l.obj, true);
-  else if (l.obj) { viewer.scene.primitives.remove(l.obj); viewer.entities.remove(l.obj); }
   layers.splice(i, 1);
+  // 本地地形摘掉后回落：选了在线地形则切回在线，否则回到平滑椭球
+  if (l.type === 'terrain') applyTerrain();
   syncLighting();
+  updateCredit();
   renderList();
 }
 
@@ -407,9 +476,10 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') $('#clear').click();
 });
 
-// ---------------- deep link: /viewer.html?asset=&type=&basemap= ----------------
-const q = new URLSearchParams(location.search);
+// ---------------- deep link: /viewer.html?asset=&type=&basemap=&terrain= ----------------
+$('#terrain').value = terrainSel;              // HTML 默认 none → 同步 ?terrain= 深链
 setBaseMap(q.get('basemap') || 'esri_img');   // free online imagery by default
+if (terrainSel !== 'none') applyTerrain();    // online global terrain on deep link
 if (q.get('asset')) {
   $('#type').value = q.get('type') || '3dtiles';
   $('#asset').value = q.get('asset');
@@ -418,7 +488,11 @@ if (q.get('asset')) {
   // no asset → offer succeeded jobs
   fetch('/api/v1/jobs?status=succeeded&limit=20').then(r => r.json()).then(({ items }) => {
     if (!items?.length) return;
-    setStatus('点击任务列表「查看」直接打开，或从下方选择近期成果：');
+    // 此提示是兜底引导，可被底图状态覆盖（既有行为）；但在线地形是异步就绪，
+    // 其状态不能反过来被这条晚到的提示吞掉 → 仅在无在线地形状态时显示
+    if (!/在线地形：/.test($('#status').textContent)) {
+      setStatus('点击任务列表「查看」直接打开，或从下方选择近期成果：');
+    }
     const sel = document.createElement('select');
     sel.innerHTML = '<option value="">— 近期成功任务 —</option>' + items.map(j =>
       (j.artifacts || []).filter(a => a.viewer).map(a =>
