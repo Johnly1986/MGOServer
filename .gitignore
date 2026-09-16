@@ -27,3 +27,12 @@ test/**/*.obj
 test/**/*.tif
 test/**/*.zip
 test/**/*.log
+
+# engine binaries are downloaded by scripts/setup.mjs (npm postinstall) from the
+# pre-configured addresses in package.json mgoEngine.downloads — never committed;
+# offline installs use MGO_ENGINE_BUNDLE (see build/bin/README.md)
+build/bin/linux/
+build/bin/windows/
+
+# engine bundle output (scripts/pack-engine.mjs → upload to GitHub Releases)
+dist/

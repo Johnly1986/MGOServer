@@ -41,5 +41,23 @@ jobs:
           set -o pipefail
           npm test 2>&1 | tee /tmp/test.log
 
+      # postinstall placed the self-contained engine in build/bin/linux/ — smoke
+      # the real release asset on every PR: it once shipped broken RUNPATHs and
+      # a missing proj.db, none of which the stub-driven suite can see.
+      - name: Real engine smoke
+        run: |
+          set -e
+          node --input-type=module -e "
+            import { probeMgo } from './src/mgo.js';
+            const i = await probeMgo('build/bin/linux/MGOConsole');
+            if (!i.found) throw new Error('engine probe failed: ' + JSON.stringify(i));
+            console.log('engine', JSON.stringify(i));
+          "
+          printf '{"type":"Point","coordinates":[500000,3300000]}' > /tmp/in.geojson
+          PROJ_DATA="$PWD/build/bin/linux/share/proj" \
+            build/bin/linux/MGOConsole geojson -i /tmp/in.geojson -o /tmp/out.geojson \
+            --source-crs EPSG:4547 --target-crs EPSG:4326
+          grep -q '"coordinates":\[114' /tmp/out.geojson && echo "EPSG conversion ok"
+
       - run: node --version
 

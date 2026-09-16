@@ -110,8 +110,9 @@ async function downloadTo(url, destFile, timeoutMs) {
   return destFile;
 }
 
-/** sha256 expected for a candidate: manifest value first, else URL sidecar. */
-async function expectedSha256(entry, url) {
+/** sha256 expected for a candidate: manifest value first, else URL sidecar.
+ *  Exported for tests. */
+export async function expectedSha256(entry, url) {
   if (entry?.sha256) return { sha256: entry.sha256, source: 'manifest' };
   try {
     const res = await fetch(`${url}.sha256`, { redirect: 'follow', signal: AbortSignal.timeout(30000) });
@@ -193,6 +194,10 @@ async function report(binary, dest) {
 export async function setup(argv = process.argv.slice(2), env = process.env, pkgRoot = PKG_ROOT) {
   const force = argv.includes('--force');
   const destIdx = argv.indexOf('--dest');
+  if (destIdx >= 0 && !argv[destIdx + 1]) {
+    warn('--dest needs a directory argument');
+    return process.exitCode = 1;
+  }
   const dest = path.resolve(destIdx >= 0 ? argv[destIdx + 1] : (env.MGO_ENGINE_DEST
     || path.join(pkgRoot, 'build', 'bin', platformDir)));
 
@@ -215,7 +220,18 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
   }
   if (force && fs.existsSync(dest)) {
     // replacing the engine: wipe the directory so an old engine's side-car
-    // libs can never mix with the new binary (version skew = subtle breakage)
+    // libs can never mix with the new binary (version skew = subtle breakage).
+    // Guard against a misconfigured --dest/MGO_ENGINE_DEST pointing at "/" or
+    // $HOME or the repo root, or at any non-empty directory that does not look
+    // like an engine dir (no MGOConsole inside) — refuse, never wipe blind.
+    const guarded = [path.resolve('/'), path.resolve(os.homedir() || '/'), path.resolve(pkgRoot)];
+    const looksLikeEngineDir = fs.existsSync(binary)
+      || (await fsp.readdir(dest).then((n) => n.length === 0).catch(() => false));
+    if (guarded.includes(path.resolve(dest)) || !looksLikeEngineDir) {
+      warn(`--force refuses to wipe ${dest}: not recognizably an engine directory`
+        + ' (no MGOConsole inside, or a guarded path)');
+      return process.exitCode = 1;
+    }
     say('  replacing   clearing', dest);
     await fsp.rm(dest, { recursive: true, force: true });
   }
@@ -283,9 +299,15 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
   // unpack
   await fsp.mkdir(dest, { recursive: true });
   say(`  extracting  ${path.basename(bundleFile)} → ${dest}`);
-  if (/\.t(ar\.)?gz$|\.tgz$/i.test(bundleFile)) await extractTar(bundleFile, dest);
-  else if (/\.zip$/i.test(bundleFile)) await extractZip(bundleFile, dest);
-  else { warn(`unsupported bundle format: ${bundleFile} (use .tgz or .zip)`); return process.exitCode = 1; }
+  try {
+    if (/\.t(ar\.)?gz$|\.tgz$/i.test(bundleFile)) await extractTar(bundleFile, dest);
+    else if (/\.zip$/i.test(bundleFile)) await extractZip(bundleFile, dest);
+    else { warn(`unsupported bundle format: ${bundleFile} (use .tgz or .zip)`); return process.exitCode = 1; }
+  } catch (e) {
+    // corrupt/traversal archives must fail the install cleanly, not crash npm
+    warn(`extraction failed: ${e?.message ?? e}`);
+    return process.exitCode = 1;
+  }
   await flattenSingleRoot(dest);
   if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 

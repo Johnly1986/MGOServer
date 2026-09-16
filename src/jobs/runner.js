@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import treeKill from 'tree-kill';
+import { withEngineEnv } from '../engine-env.js';
 
 function makeLineHandler(onLine) {
   let buf = '';
@@ -31,7 +32,13 @@ export function runJob({ binary, args, logPath, timeoutMs = 0, onLine }) {
   const promise = new Promise((resolve) => {
     let child;
     try {
-      child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      // env: inherit + bundled engine data dirs (PROJ_DATA/GDAL_DATA when the
+      // binary sits in a self-contained bundle — see src/engine-env.js)
+      child = spawn(binary, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: withEngineEnv(binary),
+      });
     } catch (err) {
       resolve({ ok: false, error: String(err?.message ?? err) });
       return;

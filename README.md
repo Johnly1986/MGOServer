@@ -31,20 +31,31 @@ OSGB 倾斜摄影——处理为 CesiumJS 可直接加载的切片数据，支�
 | 依赖 | 版本要求 | 说明 |
 |------|----------|------|
 | Node.js | >= 20 | 运行 MGOServer，服务层唯一直接依赖 |
-| MGO 可执行文件 | v1.0.0（含 BIM 属性绑定） | **仓库已内置** Linux x86-64 预编译版（`build/bin/linux/`，含引擎自带 `.so`，RUNPATH 指向 `$ORIGIN`，整目录可随意搬动），clone 即用；探测按系统选目录：Windows 查 `build/bin/windows/`，Linux 查 `build/bin/linux/` |
-| 系统 GIS 运行库 | Ubuntu 24.04 apt | 内置二进制所需的动态库：`sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data` |
 
 ## 安装
 
-Linux\Windows 开箱即用，装好 Node：
+客户机**零构建**：引擎二进制 + 全部 GIS 运行库（含 PROJ 的 proj.db、GDAL 数据）由 `npm ci`
+的 postinstall 从预配置地址自动下载安装（`package.json` 的 `mgoEngine.downloads`，可用环境变量覆盖，
+见 `.env.example`）。装好 Node 后：
 
 ```bash
 git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
-npm ci
+npm ci                # postinstall 自动下载自包含引擎包（引擎+全部 GIS 运行库+proj.db）并校验 sha256
+npm run doctor        # 可选：体检引擎/动态库闭包/proj.db/glibc 基线，一条命令定位安装问题
 ```
 
-构建产物 [MGO](https://github.com/Johnly1986/MGO/releases) 按系统放进本仓库
-`build/bin/linux/` 或 `build/bin/windows/`。
+引擎二进制不进 git：首次 `npm ci` 从 Release 下载（Linux 98MB / Windows 17MB），之后幂等跳过；
+升级用 `npm run engine:update`。
+
+- **离线内网**：`MGO_ENGINE_BUNDLE=/path/to/mgo-engine-<plat>.tgz npm ci`（包由构建机
+  `npm run engine:pack` 产出，自包含 proj.db，解压即用）。
+- **镜像加速**：`MGO_ENGINE_MIRROR=https://your-proxy/{url}`（或直接改
+  `mgoEngine.downloads` 的 url/mirrors）。
+- **自管引擎**：设 `MGO_BINARY` 指向已有可执行文件即可，安装器不干预。
+- 旧路线仍然可用：把 [MGO](https://github.com/Johnly1986/MGO/releases) 构建产物放进
+  `build/bin/linux/` 或 `build/bin/windows/`，并自行
+  `sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data`
+  （Ubuntu 24.04）——自包含引擎包就是为了免掉这一步。
 
 ## 快速开始
 

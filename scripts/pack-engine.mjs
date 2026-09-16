@@ -39,15 +39,21 @@ const SYSTEM_RUNTIME = new Set(['linux-vdso.so.1', 'ld-linux-x86-64.so.2', 'libc
   'libdl.so.2', 'libpthread.so.0', 'librt.so.1', 'libresolv.so.2', 'libnsl.so.2', 'libutil.so.1',
   'libcrypt.so.1']);
 
-async function ldd(file) {
-  const { stdout } = await execFileP('ldd', [file], { timeout: 20000 });
+/** Parse `ldd` output into {name, resolved} deps.  Exported for tests.
+ *  ldd can echo dynamic-string-token search paths ($LIB/…, ${LIB}/…) in the
+ *  dependency column — the loadable NAME is only the basename (a real bug this
+ *  once caused: copyFile into staging/$LIB/… → ENOENT). */
+export function parseLdd(stdout) {
   const deps = [];
   for (const m of stdout.matchAll(/^\s*(\S+)\s+=>\s+(not found|\/\S+).*$/gm)) {
-    // ldd can echo dynamic-string-token search paths ($LIB/…, ${LIB}/…) in the
-    // dependency column — the loadable NAME is only the basename
     deps.push({ name: path.basename(m[1]), resolved: m[2].startsWith('/') ? m[2] : null });
   }
   return deps;
+}
+
+async function ldd(file) {
+  const { stdout } = await execFileP('ldd', [file], { timeout: 20000 });
+  return parseLdd(stdout);
 }
 
 async function sha256(file) {

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { withEngineEnv } from './engine-env.js';
 
 /**
  * Startup probe of the mgo binary: version + compiled-in capabilities.
@@ -9,7 +10,9 @@ export async function probeMgo(binary) {
   const info = { path: binary, found: false, version: null, hasOsgb: false, hasBim: false };
   const run = (args) => new Promise((res) => {
     const timer = setTimeout(() => res({ err: new Error('probe timeout'), out: '' }), 8000);
-    execFile(binary, args, { timeout: 8000 }, (err, stdout) => {
+    // withEngineEnv: a self-contained engine bundle (build/bin/<plat>/share/…)
+    // brings its own proj.db/gdal-data; see src/engine-env.js
+    execFile(binary, args, { timeout: 8000, env: withEngineEnv(binary) }, (err, stdout) => {
       clearTimeout(timer);
       res({ err, out: String(stdout ?? '') });
     });
