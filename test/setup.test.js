@@ -46,7 +46,7 @@ test('candidateUrls: manifest url + mirrors, env override wins, mirror appends a
 
 test('loadEngineManifest reads mgoEngine from package.json', () => {
   const m = loadEngineManifest();
-  assert.ok(m && m.version && m.downloads['linux-x64'] && m.downloads['win-x64']);
+  assert.ok(m && m.version && m.downloads['linux-x64'] && m.downloads['win32-x64']);
 });
 
 // ── fixtures: a probe-able fake engine + bundle builders ─────────────────────

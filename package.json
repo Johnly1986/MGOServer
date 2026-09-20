@@ -31,7 +31,7 @@
         "mirrors": [],
         "sha256": "2b1c9bde7db1b60007afd5bdd4be0e4a2e5405b2408511c5bd1dbbc41c6f7b4d"
       },
-      "win-x64": {
+      "win32-x64": {
         "url": "https://github.com/Johnly1986/MGO/releases/download/v0.8.0/MGO-0.8.0-win-x64.zip",
         "mirrors": [],
         "sha256": "7924024c486e1a19ac54cfcf8c06eb2737b51f6ed6e9ff7df5eec377d910ca35"
