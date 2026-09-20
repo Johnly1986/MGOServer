@@ -18,6 +18,8 @@
  *   5. package.json mgoEngine.downloads["<platform>-<arch>"] → url + mirrors,
  *      each optionally rewritten by MGO_ENGINE_MIRROR (a '{url}' template or
  *      a plain base prefix — for regions where the default host is slow)
+ *      (process.platform is normalized first: win32 hosts resolve the "win-*"
+ *      keys, matching the release asset names; legacy "win32-*" keys still hit)
  *
  * Bundle layout (produced by scripts/pack-engine.mjs, flat at archive root):
  *   MGOConsole[.exe] + side-car libs + share/proj (proj.db) + share/gdal
@@ -53,7 +55,14 @@ const say = (...a) => console.log(...a);
 const warn = (...a) => console.error('⚠ ', ...a);
 
 // ── platform identity ────────────────────────────────────────────────────────
-export const platformKey = `${process.platform}-${process.arch}`;
+// The manifest keys and release assets say "win" (MGO-<ver>-win-x64.zip), but
+// process.platform on Windows is "win32" — normalize before building the
+// lookup key, or a Windows install misses its download entry and silently
+// skips the engine (the "no pre-configured engine download for win32-x64" bug).
+export function platformKeyFor(platform, arch) {
+  return `${platform === 'win32' ? 'win' : platform}-${arch}`;
+}
+export const platformKey = platformKeyFor(process.platform, process.arch);
 export const platformDir = process.platform === 'win32' ? 'windows' : 'linux';
 export const binaryName = process.platform === 'win32' ? 'MGOConsole.exe' : 'MGOConsole';
 
@@ -84,6 +93,17 @@ export function sha256File(file) {
       .on('error', reject)
       .on('end', () => resolve(h.digest('hex')));
   });
+}
+
+/** downloads entry for a platform key. Canonical keys are "linux-*"/"win-*";
+ *  a "win32-*" authored manifest still resolves (compat with older forks). */
+export function resolveDownloadEntry(manifest, key) {
+  const downloads = manifest?.downloads ?? {};
+  if (downloads[key]) return downloads[key];
+  const alias = key.startsWith('win32-') ? `win-${key.slice('win32-'.length)}`
+    : key.startsWith('win-') ? `win32-${key.slice('win-'.length)}`
+    : null;
+  return (alias && downloads[alias]) || null;
 }
 
 /** MGO_ENGINE_MIRROR rewriting: '{url}' template (raw URL), else plain base prefix. */
@@ -241,7 +261,7 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
   let sourceDesc = null;
   let downloadedFrom = null;
   let tmpDir = null;
-  const entry = manifest?.downloads?.[platformKey];
+  const entry = resolveDownloadEntry(manifest, platformKey);
   if (env.MGO_ENGINE_BUNDLE) {
     bundleFile = path.resolve(env.MGO_ENGINE_BUNDLE);
     if (!fs.existsSync(bundleFile)) {
@@ -250,7 +270,8 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
     sourceDesc = `offline bundle ${bundleFile}`;
   } else {
     if (!entry) {
-      warn(`no pre-configured engine download for ${platformKey} (package.json mgoEngine.downloads).`);
+      const known = Object.keys(manifest?.downloads ?? {});
+      warn(`no pre-configured engine download for ${platformKey} (package.json mgoEngine.downloads${known.length ? ` has: ${known.join(', ')}` : ' is empty'}).`);
       warn('The service will boot, but every conversion job fails until an engine is provided:');
       warn('  • drop a bundle into build/bin/' + platformDir + '/ (scripts/pack-engine.mjs), or');
       warn('  • set MGO_ENGINE_URL to a prebuilt bundle address, or');

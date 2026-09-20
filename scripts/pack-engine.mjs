@@ -26,6 +26,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { PKG_ROOT, PLATFORM_BIN_DIR } from '../src/config.js';
 
 const execFileP = promisify(execFile);
@@ -178,4 +179,9 @@ async function main() {
   await fsp.rm(staging, { recursive: true, force: true });
 }
 
-main().catch((e) => { console.error('[pack] crashed:', e?.stack ?? e); process.exit(1); });
+// only when executed directly (node scripts/pack-engine.mjs …) — a plain
+// import (test/setup.test.js imports parseLdd) must NOT kick off a full
+// multi-minute engine pack as an import side effect
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => { console.error('[pack] crashed:', e?.stack ?? e); process.exit(1); });
+}

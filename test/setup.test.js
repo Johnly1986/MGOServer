@@ -8,7 +8,7 @@ import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { setup, compareVersions, applyMirror, candidateUrls, loadEngineManifest, sha256File, expectedSha256 } from '../scripts/setup.mjs';
+import { setup, compareVersions, applyMirror, candidateUrls, loadEngineManifest, resolveDownloadEntry, platformKey, platformKeyFor, sha256File, expectedSha256 } from '../scripts/setup.mjs';
 import { parseLdd } from '../scripts/pack-engine.mjs';
 import { runJob } from '../src/jobs/runner.js';
 import { engineEnv, withEngineEnv } from '../src/engine-env.js';
@@ -47,6 +47,29 @@ test('candidateUrls: manifest url + mirrors, env override wins, mirror appends a
 test('loadEngineManifest reads mgoEngine from package.json', () => {
   const m = loadEngineManifest();
   assert.ok(m && m.version && m.downloads['linux-x64'] && m.downloads['win-x64']);
+});
+
+test('platformKeyFor: win32 hosts normalize to the "win-*" manifest keys (Windows regression)', () => {
+  // process.platform on Windows is "win32", but the manifest keys and release
+  // assets say "win" — the raw `${platform}-${arch}` key missed its download
+  // entry and Windows installs silently skipped the engine download
+  assert.equal(platformKeyFor('win32', 'x64'), 'win-x64');
+  assert.equal(platformKeyFor('win32', 'arm64'), 'win-arm64');
+  assert.equal(platformKeyFor('linux', 'x64'), 'linux-x64');
+  assert.equal(platformKeyFor('darwin', 'arm64'), 'darwin-arm64');
+  assert.equal(platformKey, platformKeyFor(process.platform, process.arch));
+});
+
+test('resolveDownloadEntry: exact key first, win-*/win32-* aliases as compat fallback', () => {
+  const manifest = { downloads: { 'win-x64': { url: 'canonical' }, 'linux-x64': { url: 'linux' } } };
+  assert.equal(resolveDownloadEntry(manifest, 'win-x64')?.url, 'canonical');
+  assert.equal(resolveDownloadEntry(manifest, 'linux-x64')?.url, 'linux');
+  // a fixed setup.mjs against an old manifest authored with "win32-x64"…
+  assert.equal(resolveDownloadEntry({ downloads: { 'win32-x64': { url: 'legacy' } } }, 'win-x64')?.url, 'legacy');
+  // …and the pre-fix raw key against the canonical manifest
+  assert.equal(resolveDownloadEntry(manifest, 'win32-x64')?.url, 'canonical');
+  assert.equal(resolveDownloadEntry(manifest, 'darwin-arm64'), null);
+  assert.equal(resolveDownloadEntry(null, 'win-x64'), null);
 });
 
 // ── fixtures: a probe-able fake engine + bundle builders ─────────────────────
@@ -346,6 +369,56 @@ t('setup: sha256 sidecar (<url>.sha256) is used when the manifest pin is empty',
   assert.equal(res.installed, true);
   assert.deepEqual(hits, ['/side.tgz', '/side.tgz.sha256']);
   await new Promise((r) => srv.close(r));
+});
+
+t('setup: a win32 host resolves the "win-x64" manifest key and downloads (Windows regression)', async () => {
+  // CI/POSIX cannot exercise the win32 branch natively — mock
+  // process.platform=win32 in a child process and confirm the pre-configured
+  // download fires. Pre-fix this printed "no pre-configured engine download
+  // for win32-x64" and skipped the engine entirely.
+  const { pathToFileURL } = await import('node:url');
+  const engineDir = path.join(root, 'fakeeng-win');
+  await makeFakeEngine(engineDir, '9.9.9-win');
+  await fsp.copyFile(path.join(engineDir, 'MGOConsole'), path.join(engineDir, 'MGOConsole.exe'));
+  const bundle = await zipBundle(engineDir, path.join(root, 'srv', 'fake-win-x64.zip'));
+  const hash = await sha256File(bundle);
+  const hits = [];
+  const srv = http.createServer((req, res) => {
+    hits.push(req.url);
+    res.writeHead(200);
+    fs.createReadStream(bundle).pipe(res);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const pkg = path.join(root, 'pkg-win');
+  await fsp.mkdir(pkg, { recursive: true });
+  await fsp.writeFile(path.join(pkg, 'package.json'), JSON.stringify({
+    mgoEngine: {
+      version: '9.9.9-win',
+      downloads: { 'win-x64': { url: `${base}/fake-win-x64.zip`, sha256: hash } },
+    },
+  }));
+  const dest = path.join(root, 'bin-win32');
+  // pre-set TEMP before the platform mock: with process.platform=win32 the
+  // child's os.tmpdir() reads the Windows-only TEMP/TMP/SystemRoot env vars,
+  // which a POSIX CI host does not carry (mkdtemp would get "undefined\temp")
+  const child = 'process.env.TEMP = "/tmp"; process.env.TMP = "/tmp";'
+    + 'Object.defineProperty(process, "platform", { value: "win32" });'
+    + `const { setup } = await import(${JSON.stringify(pathToFileURL(path.resolve(import.meta.dirname, '..', 'scripts', 'setup.mjs')).href)});`
+    + `await setup(["--dest", ${JSON.stringify(dest)}], {}, ${JSON.stringify(pkg)});`;
+  // the probe of the fake .exe "binary" fails on POSIX — the child may exit 1,
+  // the contract under test is that the win-x64 entry resolved and the bundle
+  // was fetched + unpacked
+  try {
+    const { stdout, stderr } = await execFileP(process.execPath, ['--input-type=module', '-e', child], { timeout: 60000 })
+      .catch((e) => ({ stdout: e.stdout ?? '', stderr: e.stderr ?? '' }));
+    assert.deepEqual(hits, ['/fake-win-x64.zip'], 'win32 host must resolve the win-x64 entry and download');
+    assert.doesNotMatch(stderr, /no pre-configured engine download/);
+    assert.match(stdout, /downloading .*fake-win-x64\.zip/);
+    assert.equal(fs.existsSync(path.join(dest, 'MGOConsole.exe')), true, 'bundle must be unpacked into the dest');
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
 });
 
 t('setup: zip-slip entries are rejected, nothing written outside the destination', async () => {
