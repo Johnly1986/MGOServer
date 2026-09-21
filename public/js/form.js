@@ -141,7 +141,7 @@ export function fieldNode(f) {
     s.addEventListener('input', () => { syncPrjPriority(); hooks.syncBim(); });
     const row = el('div', { class: cls + ' pathOnly' }, label(f.label),
       iw(el('div', { class: 'fsRow' }, s, btn), tipFor(f)));
-    row.hidden = true;                       // 初始上传模式；applyPathOnly() 按模式放行
+    row.hidden = true;                       // 初始隐藏；applyPathOnly() 按 FilePicker 当前模式放行
     return row;
   }
   if (f.t === 'file') {

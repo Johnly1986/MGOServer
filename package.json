@@ -27,14 +27,14 @@
     "_doc": "预配置引擎下载清单：客户机零构建，scripts/setup.mjs（npm postinstall）按平台从这些地址取引擎包并校验 sha256。资产托管在 MGO 仓库 Release（https://github.com/Johnly1986/MGO/releases）。注意：v0.8.0 起两个平台包均自包含、解压即用（linux：ldd 闭包收集全部依赖库 + OSG 插件目录 + share/proj 数据随包，RUNPATH 已是 $ORIGIN，无需 apt 安装系统 GIS 库，包体 ~93MB；win：gdal.dll/proj.db/gdaldata 齐备）。version=发布 tag；reportsVersion=二进制 version 子命令实际打印的版本（自上游 v0.8.0 起版本串已同步 bump，两者一致；若上游未来再次偏离以实际打印值为准）。发布新版本时更新 url/sha256/reportsVersion 三个字段；mirrors 数组可放国内可达的镜像地址。环境变量覆盖：MGO_ENGINE_URL、MGO_ENGINE_MIRROR（{url} 模板或前缀）、MGO_ENGINE_BUNDLE（离线本地包）、MGO_ENGINE_SKIP=1。",
     "downloads": {
       "linux-x64": {
-        "url": "https://github.com/Johnly1986/MGO/releases/download/v0.8.0/MGO-0.8.0-linux-x64.tar.gz",
+        "url": "https://github.com/Johnly1986/MGO/releases/download/v0.8.0.1-rc1/MGO-0.8.0.1-rc1-linux-x64.tar.gz",
         "mirrors": [],
-        "sha256": "2b1c9bde7db1b60007afd5bdd4be0e4a2e5405b2408511c5bd1dbbc41c6f7b4d"
+        "sha256": "6f970868063337a8e1a8dc059106f2e0e1fab9eaf3e6422f75adf21825d5f1f0"
       },
-      "win32-x64": {
-        "url": "https://github.com/Johnly1986/MGO/releases/download/v0.8.0/MGO-0.8.0-win-x64.zip",
+      "win-x64": {
+        "url": "https://github.com/Johnly1986/MGO/releases/download/v0.8.0.1-rc1/MGO-0.8.0.1-rc1-win-x64.zip",
         "mirrors": [],
-        "sha256": "7924024c486e1a19ac54cfcf8c06eb2737b51f6ed6e9ff7df5eec377d910ca35"
+        "sha256": "8da4dc9dddfe411e4122105552b223660d6f397bb604630361c17cac63e199f3"
       }
     }
   },

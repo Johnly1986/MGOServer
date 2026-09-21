@@ -112,6 +112,20 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     }
   }
 
+  /** Trusted loopback clients (127.0.0.1 / ::1).  Same trust level as
+   *  whitelist management: whoever runs a browser on the server machine can
+   *  read those files anyway, so the console's 「服务器路径」 mode stays open
+   *  for them even without MGO_ALLOW_LOCAL_PATH (that switch is for remote
+   *  clients).  Containment inside MGO_ALLOWED_ROOTS still applies. */
+  function localClient(req) {
+    return BUILTIN_LOCAL.includes(normalizeIp(req.ip));
+  }
+  /** cfg view used for every local-path check in this request: loopback
+   *  clients pass the allowLocalPath gate even when the global switch is off. */
+  function pathCfgFor(req) {
+    return !cfg.allowLocalPath && localClient(req) ? { ...cfg, allowLocalPath: true } : cfg;
+  }
+
   /* ---- meta ---- */
   app.get('/api/v1/health', async () => ({
     status: 'ok',
@@ -145,39 +159,46 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     };
   });
 
-  app.get('/api/v1/capabilities', async (req) => ({
-    jobTypes: mgo.hasOsgb ? JOB_TYPES : JOB_TYPES.filter((t) => t !== 'osgb'),
-    limits: {
-      uploadMaxBytes: cfg.uploadMaxBytes,
-      queueMax: cfg.queueMax,
-      maxConcurrentJobs: cfg.maxConcurrentJobs,
-      maxInputFiles: cfg.maxInputFiles,
-      jobTimeoutS: cfg.jobTimeoutS,
-      ttlDays: cfg.ttlDays,
-    },
-    features: {
-      osgb: mgo.hasOsgb,
-      localPathInput: cfg.allowLocalPath,
-      fsBrowse: cfg.allowLocalPath,
-      multiFileTiles: Boolean(cfg.tilesToolsCli),
-      bimBinding: Boolean(mgo.hasBim),
-      authMode: 'ip-whitelist',
-    },
-    client: {
-      ip: normalizeIp(req.ip),
-      allowed: cfg.isAllowedIp(req.ip),
-      canManageWhitelist: BUILTIN_LOCAL.includes(normalizeIp(req.ip)),
-    },
-    cesium: { version: '1.111', selfHosted: cesiumLocal },
-  }));
+  app.get('/api/v1/capabilities', async (req) => {
+    const local = localClient(req);
+    return {
+      jobTypes: mgo.hasOsgb ? JOB_TYPES : JOB_TYPES.filter((t) => t !== 'osgb'),
+      limits: {
+        uploadMaxBytes: cfg.uploadMaxBytes,
+        queueMax: cfg.queueMax,
+        maxConcurrentJobs: cfg.maxConcurrentJobs,
+        maxInputFiles: cfg.maxInputFiles,
+        jobTimeoutS: cfg.jobTimeoutS,
+        ttlDays: cfg.ttlDays,
+      },
+      features: {
+        osgb: mgo.hasOsgb,
+        localPathInput: cfg.allowLocalPath || local,
+        fsBrowse: cfg.allowLocalPath || local,
+        multiFileTiles: Boolean(cfg.tilesToolsCli),
+        bimBinding: Boolean(mgo.hasBim),
+        authMode: 'ip-whitelist',
+      },
+      client: {
+        ip: normalizeIp(req.ip),
+        local,
+        allowed: cfg.isAllowedIp(req.ip),
+        canManageWhitelist: local,
+      },
+      cesium: { version: '1.111', selfHosted: cesiumLocal },
+    };
+  });
 
   /* ---- server file browser (console "服务器路径" mode) ----
    * POST on purpose: the preHandler write-gate (IP whitelist) applies, so
    * directory enumeration is only reachable by clients allowed to submit jobs
-   * anyway.  Listing stays strictly inside MGO_ALLOWED_ROOTS (realpath-based,
-   * same containment rules as checkLocalPath); dotfiles hidden. */
+   * anyway.  Enabled when MGO_ALLOW_LOCAL_PATH is on (any whitelisted client)
+   * and always for trusted loopback clients; listing stays strictly inside
+   * MGO_ALLOWED_ROOTS (realpath-based, same containment rules as
+   * checkLocalPath); dotfiles hidden. */
   app.post('/api/v1/fs/browse', async (req) => {
-    if (!cfg.allowLocalPath) {
+    const pathCfg = pathCfgFor(req);
+    if (!pathCfg.allowLocalPath) {
       throw err(403, 'LOCAL_PATH_DISABLED',
         'server-local paths are disabled — set MGO_ALLOW_LOCAL_PATH=1 to browse/submit local inputs');
     }
@@ -192,7 +213,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
       } catch { return { path: r, name: path.basename(r) || r, ok: false }; }
     });
     if (!raw) return { roots, cwd: null, dirs: [], files: [], parent: null };
-    const dir = checkLocalPath(raw, cfg, { kind: 'dir', label: 'path' });
+    const dir = checkLocalPath(raw, pathCfg, { kind: 'dir', label: 'path' });
     const CAP = 1000;
     const dirs = []; const files = [];
     let truncated = false;
@@ -304,6 +325,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
   /* ---- create job ---- */
   app.post('/api/v1/jobs', async (req, reply) => {
     const ct = String(req.headers['content-type'] ?? '');
+    const pathCfg = pathCfgFor(req);   // local-path gate: loopback clients always pass
     let options; let input;
     let stagedDir = null;   // multipart staging dir; removed on every failure path
 
@@ -561,7 +583,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         const isLocalDir = TREE_TYPES.has(options.type)
           && fs.existsSync(path.resolve(p)) && fs.statSync(path.resolve(p)).isDirectory();
         if (isLocalDir) {
-          const root = checkLocalPath(p, cfg, { kind: 'dir', label: 'inputPath' });
+          const root = checkLocalPath(p, pathCfg, { kind: 'dir', label: 'inputPath' });
           const rels = await listTree(root, cfg.uploadMaxFiles, 'local model folder');
           const models = resolveTreeModels(options.type, rels, options); // consumes modelPath(s)
           input = {
@@ -580,7 +602,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         throw err(422, 'INPUT_REQUIRED', 'provide a multipart "file" or JSON "inputPath"/"inputPaths"');
       }
       if (paths) {
-        const abs = paths.map((x) => checkLocalPath(x, cfg, { kind, label: 'inputPath' }));
+        const abs = paths.map((x) => checkLocalPath(x, pathCfg, { kind, label: 'inputPath' }));
         for (const a of abs) validateInput(options.type, { name: path.basename(a), kind });
         if (abs.length > 1) {
           input = {
@@ -617,7 +639,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         'this mgo binary does not support BIM property binding (--bim-*): upgrade the engine or drop the bim params',
         { mgoVersion: mgo.version, mgoPath: mgo.path });
     }
-    const params = checkParamPaths(parsed.data, cfg);
+    const params = checkParamPaths(parsed.data, pathCfg);
     let job;
     try {
       job = await manager.create({ type: parsed.data.type, params, input });

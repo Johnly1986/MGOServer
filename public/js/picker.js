@@ -18,8 +18,10 @@ export const fpk = { picker: null, treePick: null };
  * 单一输入控件，内含分段切换（服务器开启本地路径时）：
  *   ⬆ 上传        —— 拖/选 模型文件、模型+贴图 ZIP、整个文件夹（树通道）
  *   🖥 服务器路径  —— 手填 + 只读目录浏览点选（原地处理，不上传不搬动）
- * 切换段恒显示；服务器未开启本地路径（MGO_ALLOW_LOCAL_PATH）时路径段置灰 +
- * tooltip 说明开启方式。OSGB 与 tiles/mesh 共用本组件。
+ * 默认段即「🖥 服务器路径」（可用时）：控制台主场景是服务器侧数据原地转换。
+ * 可用性按客户端判定：本机 127.0.0.1/::1 访问恒可用；远程访问需服务器开启
+ * MGO_ALLOW_LOCAL_PATH，未开启时路径段置灰 + tooltip 说明开启方式。
+ * OSGB 与 tiles/mesh 共用本组件。
  */
 export function renderInputArea(type) {
   const area = $('#inputArea'); area.innerHTML = '';
@@ -114,7 +116,9 @@ function createFilePicker(type) {
       : '服务器本地路径，免上传、原地处理'));
 
   /* ---- 模式切换 ---- */
-  let mode = 'upload';
+  // 默认段：路径模式可用（本机访问恒可用，或服务器开启 MGO_ALLOW_LOCAL_PATH）
+  // 时直接落在「🖥 服务器路径」；仅上传可达时才回落到「⬆ 上传」。
+  let mode = allowPath ? 'path' : 'upload';
   let seg = null;
   const setMode = (m) => {
     mode = m;
@@ -123,16 +127,17 @@ function createFilePicker(type) {
     if (seg) for (const b of seg.querySelectorAll('button')) b.classList.toggle('on', b.dataset.m === m);
     document.dispatchEvent(new CustomEvent('fpk-mode', { detail: { mode: m } }));
   };
-  // 切换段恒在：服务器未启用本地路径时，路径段置灰并以 tooltip 说明开启方式
+  // 切换段恒在：路径模式对该客户端不可用时，路径段置灰并以 tooltip 说明开启方式
   seg = el('div', { class: 'fpkSeg', id: 'fpkSeg' },
-    el('button', { type: 'button', class: 'on', 'data-m': 'upload', onclick: () => setMode('upload') }, '⬆ 上传'),
+    el('button', { type: 'button', 'data-m': 'upload', onclick: () => setMode('upload') }, '⬆ 上传'),
     allowPath
       ? el('button', { type: 'button', 'data-m': 'path', onclick: () => setMode('path') }, '🖥 服务器路径')
       : el('button', { type: 'button', 'data-m': 'path', disabled: '',
-        title: '服务器未启用本地路径模式——设置 MGO_ALLOW_LOCAL_PATH=1 与 MGO_ALLOWED_ROOTS 后重启，即可填写/浏览服务器文件（原地处理，免上传）' },
+        title: '远程访问未启用服务器路径模式——在服务器设置 MGO_ALLOW_LOCAL_PATH=1 与 MGO_ALLOWED_ROOTS 后重启即可（本机 127.0.0.1 访问此模式恒可用）' },
       '🖥 服务器路径'));
   root.append(seg);
   root.append(upPane, pathPane);
+  setMode(mode);   // 初始段高亮 + 面板可见性（默认即「服务器路径」，若可用）
   root.getMode = () => mode;
   return root;
 }

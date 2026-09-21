@@ -15,7 +15,7 @@ import { promisify } from 'node:util';
 import { loadConfig, PKG_ROOT, PLATFORM_BIN_DIR } from '../src/config.js';
 import { probeMgo } from '../src/mgo.js';
 import { engineEnv } from '../src/engine-env.js';
-import { loadEngineManifest, platformKey, binaryName, compareVersions } from './setup.mjs';
+import { loadEngineManifest, resolveDownloadEntry, platformKey, binaryName, compareVersions } from './setup.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -42,7 +42,7 @@ async function main() {
   if (nodeMajor >= 20) pass('node', `${process.version} (>= 20)`);
   else fail('node', `${process.version} — MGOServer needs >= 20`);
 
-  if (manifest?.downloads?.[platformKey]) info('platform', `${platformKey} — pre-configured engine download available`);
+  if (resolveDownloadEntry(manifest, platformKey)) info('platform', `${platformKey} — pre-configured engine download available`);
   else if (process.platform === 'darwin') warnRow('platform', `${platformKey} — no engine; run the service under Docker`);
   else warnRow('platform', `${platformKey} — no pre-configured engine (see docs/INSTALLER_DESIGN.md)`);
 

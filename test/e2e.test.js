@@ -1168,7 +1168,13 @@ test('fs browse: outside roots / missing path / file-as-dir all rejected', skip,
   assert.match(bad.body.error.message, /not a directory/);
 });
 
-test('fs browse: 403 + capability off when allowLocalPath disabled', skip, async () => {
+test('fs browse: loopback always allowed, remote needs allowLocalPath', skip, async () => {
+  // 本机（127.0.0.1）访问「服务器路径」模式恒可用——即使 MGO_ALLOW_LOCAL_PATH
+  // 未开启（与白名单管理同级的本机信任）；远程客户端仍需显式开启。
+  // 远端场景借 trustProxy='loopback' 用 X-Forwarded-For 模拟（配合
+  // MGO_IP_WHITELIST 让请求穿过写闸门，落到 LOCAL_PATH_DISABLED）。
+  const prevWl = process.env.MGO_IP_WHITELIST;
+  process.env.MGO_IP_WHITELIST = '203.0.113.9';
   const app3 = await buildApp(loadConfig({
     binary: FAKE, workspaceRoot: path.join(tmp, 'ws3'), maxConcurrentJobs: 1,
     queueMax: 5, minFreeGb: 0, ttlDays: 7, jobTimeoutS: 30,
@@ -1177,15 +1183,37 @@ test('fs browse: 403 + capability off when allowLocalPath disabled', skip, async
   await app3.listen({ host: '127.0.0.1', port: 0 });
   try {
     const b3 = `http://127.0.0.1:${app3.server.address().port}`;
+    // localhost: capability on + browse works + job with inputPath accepted
     const caps = await (await fetch(b3 + '/api/v1/capabilities')).json();
-    assert.equal(caps.features.fsBrowse, false);
+    assert.equal(caps.features.fsBrowse, true);
+    assert.equal(caps.client.local, true);
     const r = await fetch(b3 + '/api/v1/fs/browse', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: tmp }),
     });
-    assert.equal(r.status, 403);
-    assert.equal((await r.json()).error.code, 'LOCAL_PATH_DISABLED');
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).cwd, await fsp.realpath(tmp));
+    const tif = path.join(tmp, 'loopback.tif');
+    await fsp.writeFile(tif, 'x');
+    const j = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: tif }, {}, b3);
+    assert.equal(j.status, 201, JSON.stringify(j.json));
+    // remote (whitelisted via XFF): capability off + browse/job rejected
+    const XF = { 'x-forwarded-for': '203.0.113.9' };
+    const capsR = await (await fetch(b3 + '/api/v1/capabilities', { headers: XF })).json();
+    assert.equal(capsR.features.fsBrowse, false);
+    assert.equal(capsR.client.local, false);
+    const rr = await fetch(b3 + '/api/v1/fs/browse', {
+      method: 'POST', headers: { 'content-type': 'application/json', ...XF },
+      body: JSON.stringify({ path: tmp }),
+    });
+    assert.equal(rr.status, 403);
+    assert.equal((await rr.json()).error.code, 'LOCAL_PATH_DISABLED');
+    const jr = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: tif }, XF, b3);
+    assert.equal(jr.status, 403);
+    assert.match(jr.json.error.message, /disabled/i);
   } finally {
+    if (prevWl === undefined) delete process.env.MGO_IP_WHITELIST;
+    else process.env.MGO_IP_WHITELIST = prevWl;
     await app3.close();
   }
 });
