@@ -132,6 +132,11 @@ export function parseAllowedRoots(value, platform = process.platform) {
 }
 
 export function loadConfig(overrides = {}) {
+  // Wildcard mode: MGO_ALLOWED_ROOTS unset/empty OR containing '*' browses the
+  // WHOLE filesystem (single-operator default; the '*' token makes it explicit).
+  // The IP whitelist + MGO_ALLOW_LOCAL_PATH gates still apply on top of it.
+  const rawRoots = env('MGO_ALLOWED_ROOTS', '');
+  const parsedRoots = parseAllowedRoots(rawRoots, process.platform);
   const base = {
     host: env('MGO_HOST', '0.0.0.0'),
     port: envInt('MGO_PORT', 8080),
@@ -148,7 +153,8 @@ export function loadConfig(overrides = {}) {
     jobTimeoutS: envInt('MGO_JOB_TIMEOUT_S', 4 * 3600),
     ttlDays: envInt('MGO_TTL_DAYS', 7),
     allowLocalPath: envBool('MGO_ALLOW_LOCAL_PATH', false),
-    allowedRoots: [...new Set(parseAllowedRoots(env('MGO_ALLOWED_ROOTS', ''), process.platform)
+    allowAllRoots: rawRoots.trim() === '' || parsedRoots.includes('*'),
+    allowedRoots: [...new Set(parsedRoots.filter((p) => p !== '*')
       .map((p) => path.resolve(p)))],
     publicDir: path.join(PKG_ROOT, 'public'),
     cesiumLocalEntry: path.join(PKG_ROOT, 'public', 'cesium', 'Cesium.js'),
@@ -156,6 +162,11 @@ export function loadConfig(overrides = {}) {
     trustProxy: envTrustProxy(),
   };
   const cfg = { ...base, ...overrides };
+  // An explicit `allowedRoots` override (tests, embedders) is a containment
+  // declaration: wildcard stays off unless the override says `allowAllRoots`.
+  if (overrides.allowedRoots !== undefined && overrides.allowAllRoots === undefined) {
+    cfg.allowAllRoots = false;
+  }
 
   // IP whitelist for write operations: localhost is always allowed, plus
   // MGO_IP_WHITELIST (comma-separated IP/CIDR) plus <workspace>/whitelist.json

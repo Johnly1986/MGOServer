@@ -4,30 +4,34 @@ import fs from 'node:fs';
 /**
  * Server-side absolute-path access control for inputPath / prjPath /
  * controlPointsPath / configCsvPath.  Allowed ONLY when the feature is
- * enabled and the resolved path sits inside MGO_ALLOWED_ROOTS.
+ * enabled and either the resolved path sits inside MGO_ALLOWED_ROOTS or
+ * wildcard mode is on (MGO_ALLOWED_ROOTS unset or '*' — cfg.allowAllRoots,
+ * see loadConfig): then any existing path is accepted.
  */
 export function checkLocalPath(raw, cfg, { kind = 'file', label = 'path' } = {}) {
   if (!cfg.allowLocalPath) {
     throw Object.assign(new Error('server-local paths are disabled (set MGO_ALLOW_LOCAL_PATH=1)'),
       { statusCode: 403 });
   }
-  if (!cfg.allowedRoots.length) {
+  if (!cfg.allowAllRoots && !cfg.allowedRoots.length) {
     throw Object.assign(new Error('MGO_ALLOWED_ROOTS is not configured'), { statusCode: 403 });
   }
   let abs;
   try { abs = path.resolve(raw); } catch {
     throw Object.assign(new Error(`invalid ${label}`), { statusCode: 400 });
   }
-  const roots = cfg.allowedRoots.map((r) => {
-    const real = fs.realpathSync(r);
-    return real.endsWith(path.sep) ? real : real + path.sep;
-  });
   let real;
   try { real = fs.realpathSync(abs); } catch {
     throw Object.assign(new Error(`${label} does not exist: ${abs}`), { statusCode: 400 });
   }
-  if (!roots.some((r) => (real + path.sep).startsWith(r) || real === r.slice(0, -1))) {
-    throw Object.assign(new Error(`${label} outside allowed roots`), { statusCode: 403 });
+  if (!cfg.allowAllRoots) {
+    const roots = cfg.allowedRoots.map((r) => {
+      const rp = fs.realpathSync(r);
+      return rp.endsWith(path.sep) ? rp : rp + path.sep;
+    });
+    if (!roots.some((r) => (real + path.sep).startsWith(r) || real === r.slice(0, -1))) {
+      throw Object.assign(new Error(`${label} outside allowed roots`), { statusCode: 403 });
+    }
   }
   const st = fs.statSync(real);
   if (kind === 'file' && !st.isFile()) {

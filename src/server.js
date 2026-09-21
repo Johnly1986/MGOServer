@@ -144,13 +144,18 @@ async function main() {
         + 'fix MGO_BINARY (or build the C++ toolkit at ../MGO) and restart',
     });
   }
-  // Loud on purpose: a wrong MGO_ALLOWED_ROOTS is invisible at startup — the
-  // console file browser just shows an empty / 不存在 list, which reads as a
-  // browser bug instead of a configuration one (most common on Windows: the
-  // POSIX ':' separator habit, or a .env copied from a Linux box).
-  if (!cfg.allowedRoots.length) {
-    app.log.warn('MGO_ALLOWED_ROOTS is empty — the console 服务器路径 file browser has '
-      + "no roots to list; set it in .env and restart (Windows example: MGO_ALLOWED_ROOTS=D:\\data;E:\\prj — ';'-separated, paths must exist)");
+  // Loud on purpose: MGO_ALLOWED_ROOTS misconfiguration is invisible at
+  // startup — the console file browser just shows an empty / unexpected list.
+  // Wildcard (unset or '*') is the single-operator default, but operators must
+  // SEE that the whole filesystem is reachable.
+  if (cfg.allowAllRoots) {
+    app.log.warn('MGO_ALLOWED_ROOTS is unset or "*" — WILDCARD MODE: the console 服务器路径 '
+      + 'file browser and local-path job inputs can reach the WHOLE filesystem '
+      + '(IP whitelist + MGO_ALLOW_LOCAL_PATH gates still apply). Set explicit roots '
+      + "to lock it down, e.g. MGO_ALLOWED_ROOTS=D:\\data;E:\\prj (';'-separated on Windows)");
+  } else if (!cfg.allowedRoots.length) {
+    app.log.warn('MGO_ALLOWED_ROOTS is empty (explicitly) — the console 服务器路径 file browser has '
+      + 'no roots to list; leave it unset for wildcard mode or set explicit roots and restart');
   } else {
     const missing = cfg.allowedRoots.filter((r) => {
       try { return !fs.statSync(r).isDirectory(); } catch { return true; }

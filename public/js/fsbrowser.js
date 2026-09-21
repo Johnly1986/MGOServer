@@ -11,7 +11,8 @@ import { fileAccept } from './console-spec.js';
  * 再「加入选中」会拼出错误路径，且同名文件跨目录误高亮。现在选择跨目录
  * 保留、路径即所见即所得。 */
 export const fsState = { cwd: null, last: null, req: '', sel: [], multi: false, allowDir: false,
-  exts: [], filter: '', onlyOk: true, input: null, loading: false, err: null, errReq: null };
+  exts: [], filter: '', onlyOk: true, input: null, loading: false, err: null, errReq: null,
+  wildcard: false };
 export const fsExtOf = (name) => { const m = /\.([A-Za-z0-9]+)$/.exec(name); return m ? '.' + m[1].toLowerCase() : ''; };
 /**
  * 目标输入框中【已选/已加入】的绝对路径集合。多选模式下这些条目在列表中
@@ -76,7 +77,7 @@ export async function fsLoad(p, { quiet = false } = {}) {
   try {
     const d = await fsBrowse(p);
     fsState.loading = false;
-    fsState.last = d; fsState.cwd = d.cwd;
+    fsState.last = d; fsState.cwd = d.cwd; fsState.wildcard = Boolean(d.wildcard);
     fsRender();
   } catch (e) {
     fsState.loading = false;
@@ -98,7 +99,8 @@ export function fsRender() {
     return;
   }
   if (!fsState.last) {
-    st.textContent = fsState.err ? '✗ ' + fsState.err : '允许的根目录（MGO_ALLOWED_ROOTS）';
+    st.textContent = fsState.err ? '✗ ' + fsState.err
+      : fsState.wildcard ? '整个文件系统（MGO_ALLOWED_ROOTS=*）' : '允许的根目录（MGO_ALLOWED_ROOTS）';
     if (fsState.err) {
       list.append(
         el('button', { class: 'fsItem', onclick: () => fsLoad(fsState.errReq ?? '') }, '↻ 重试本目录'),
@@ -110,7 +112,8 @@ export function fsRender() {
   }
   const d = fsState.last;
   const inDir = Boolean(d.cwd);
-  st.textContent = inDir ? d.cwd : '允许的根目录（MGO_ALLOWED_ROOTS）';
+  st.textContent = inDir ? d.cwd
+    : d.wildcard ? '整个文件系统（MGO_ALLOWED_ROOTS=*）' : '允许的根目录（MGO_ALLOWED_ROOTS）';
   st.title = inDir ? d.cwd : '';
   $('#fsUseDir').hidden = !(fsState.allowDir && inDir);
   // 多选下当前目录已整体加入过 → 按钮置灰，避免重复选择
@@ -120,11 +123,15 @@ export function fsRender() {
   $('#fsUseDir').title = dirUsed ? '当前目录已填入路径框，如需重选请先清空或修改路径框' : '';
 
   // ---- 面包屑：最长匹配根 + 可点分段（当前段置灰样式） ----
+  // 根本身可能自带分隔符（通配模式：POSIX 的 '/'、Windows 的 'C:\'），先按
+  // 自带分隔符整体前缀匹配，再退回「根 + 分隔符」拼接匹配。
   if (inDir && (d.roots ?? []).length) {
     let root = null;
     for (const r of d.roots) {
       if (!r.ok) continue;
-      if (d.cwd === r.path || d.cwd.startsWith(r.path + '/') || d.cwd.startsWith(r.path + '\\')) {
+      const base = /[\\/]$/.test(r.path) ? r.path : null;
+      if (d.cwd === r.path || (base && d.cwd.startsWith(base))
+        || d.cwd.startsWith(r.path + '/') || d.cwd.startsWith(r.path + '\\')) {
         if (!root || r.path.length > root.path.length) root = r;
       }
     }
@@ -150,14 +157,16 @@ export function fsRender() {
         (r.ok ? '📁 ' : '🚫 ') + r.name + (r.ok ? '' : '（不存在）')));
     }
     // 空态提示：请求成功但没有任何可浏览根目录时不许无声空白——那会被当成
-    // 「弹框坏了」而不是「配置没生效」。两个 Windows 高频成因各给一句：
-    // ① MGO_ALLOWED_ROOTS 根本没配；② 配了但路径在服务器上不存在
+    // 「弹框坏了」。通配模式正常必有盘符/'/'；走到这里只可能是极端环境
+    // （如 Windows 一个可用盘符都没有）。显式模式则对应两类配置错误：
+    // ① MGO_ALLOWED_ROOTS 根本没配到路径；② 配了但路径在服务器上不存在
     //   （.env 从 Linux 拷贝 / POSIX 的 ':' 分隔习惯在 Windows 失效）。
     if (!list.children.length) {
       list.append(el('div', { class: 'fsEmpty' },
-        '未配置 MGO_ALLOWED_ROOTS —— 服务器文件浏览器没有可浏览的根目录',
+        d.wildcard ? '未找到可浏览的盘符/根目录'
+          : '未配置 MGO_ALLOWED_ROOTS（未配置本应是全盘通配模式）——请检查 .env 是否被命令行参数覆盖',
         el('div', { style: 'margin-top:6px;font-size:12px;color:#93a0b4' },
-          '在服务器 .env 中设置并重启（Windows 用分号分隔，路径需真实存在）：MGO_ALLOWED_ROOTS=D:\\data;E:\\prj')));
+          '显式限定的配置示例（Windows 用分号分隔，路径需真实存在）：MGO_ALLOWED_ROOTS=D:\\data;E:\\prj')));
     } else if (!(d.roots ?? []).some((r) => r.ok)) {
       list.append(el('div', { class: 'fsEmpty' },
         '配置的根目录在服务器上都不存在（路径写错，或 .env 从别的系统拷贝而来）',

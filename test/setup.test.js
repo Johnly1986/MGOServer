@@ -46,7 +46,9 @@ test('candidateUrls: manifest url + mirrors, env override wins, mirror appends a
 
 test('loadEngineManifest reads mgoEngine from package.json', () => {
   const m = loadEngineManifest();
-  assert.ok(m && m.version && m.downloads['linux-x64'] && m.downloads['win32-x64']);
+  // canonical keys are "linux-*"/"win-*" (see resolveDownloadEntry) — the
+  // package.json manifest authors "win-x64", never "win32-x64"
+  assert.ok(m && m.version && m.downloads['linux-x64'] && m.downloads['win-x64']);
 });
 
 test('platformKeyFor: win32 hosts normalize to the "win-*" manifest keys (Windows regression)', () => {

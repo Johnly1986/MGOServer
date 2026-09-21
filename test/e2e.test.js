@@ -1218,6 +1218,49 @@ test('fs browse: loopback always allowed, remote needs allowLocalPath', skip, as
   }
 });
 
+test('fs browse: wildcard mode (allowAllRoots) lists fs roots, browses/submits outside explicit roots', skip, async () => {
+  // MGO_ALLOWED_ROOTS unset or '*' → allowAllRoots: any existing path is
+  // listable/submit-able; the root list becomes the system's drive roots.
+  const appW = await buildApp(loadConfig({
+    binary: FAKE, workspaceRoot: path.join(tmp, 'ws-wild'), maxConcurrentJobs: 1,
+    queueMax: 5, minFreeGb: 0, ttlDays: 7, jobTimeoutS: 30,
+    allowLocalPath: true, allowedRoots: [], allowAllRoots: true, logLevel: 'silent',
+  }));
+  await appW.listen({ host: '127.0.0.1', port: 0 });
+  try {
+    const bw = `http://127.0.0.1:${appW.server.address().port}`;
+    const browseW = async (p) => {
+      const r = await fetch(bw + '/api/v1/fs/browse', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: p }),
+      });
+      return { status: r.status, body: await r.json() };
+    };
+    // root list: wildcard flag on, every root usable, at least one entry
+    const roots = (await browseW('')).body;
+    assert.equal(roots.wildcard, true);
+    assert.ok(roots.roots.length >= 1, 'must offer at least one filesystem root');
+    assert.ok(roots.roots.every((r) => r.ok), 'wildcard roots are the live fs roots');
+    // a directory OUTSIDE the (empty) explicit roots now lists fine
+    const dir = path.join(tmp, 'wild-' + Date.now());
+    await fsp.mkdir(dir);
+    await fsp.writeFile(path.join(dir, 'm.obj'), 'z');
+    const dr = await browseW(dir);
+    assert.equal(dr.status, 200);
+    const d = dr.body;
+    assert.equal(d.wildcard, true);
+    assert.deepEqual(d.files.map((f) => f.name), ['m.obj']);
+    assert.ok(d.parent, 'wildcard mode must offer climb-up beyond explicit roots');
+    // job submission outside any root passes checkLocalPath too
+    const tif = path.join(dir, 'w.tif');
+    await fsp.writeFile(tif, 'x');
+    const j = await api('POST', '/api/v1/jobs', { type: 'terrain', inputPath: tif }, {}, bw);
+    assert.equal(j.status, 201, JSON.stringify(j.json));
+  } finally {
+    await appW.close();
+  }
+});
+
 test('maxConcurrentJobs is honored for a burst of queued jobs', skip, async () => {
   // Regression: pump() used to gate on handles.size, but a slot only appears
   // in `handles` once spawn() runs — after start() has already awaited.

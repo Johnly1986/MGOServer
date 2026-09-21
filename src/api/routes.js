@@ -116,7 +116,9 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
    *  whitelist management: whoever runs a browser on the server machine can
    *  read those files anyway, so the console's 「服务器路径」 mode stays open
    *  for them even without MGO_ALLOW_LOCAL_PATH (that switch is for remote
-   *  clients).  Containment inside MGO_ALLOWED_ROOTS still applies. */
+   *  clients).  Containment inside MGO_ALLOWED_ROOTS still applies, except in
+   *  wildcard mode (roots unset or '*' — allowAllRoots): then the whole
+   *  filesystem is reachable. */
   function localClient(req) {
     return BUILTIN_LOCAL.includes(normalizeIp(req.ip));
   }
@@ -193,9 +195,22 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
    * POST on purpose: the preHandler write-gate (IP whitelist) applies, so
    * directory enumeration is only reachable by clients allowed to submit jobs
    * anyway.  Enabled when MGO_ALLOW_LOCAL_PATH is on (any whitelisted client)
-   * and always for trusted loopback clients; listing stays strictly inside
+   * and always for trusted loopback clients.  Listing stays strictly inside
    * MGO_ALLOWED_ROOTS (realpath-based, same containment rules as
-   * checkLocalPath); dotfiles hidden. */
+   * checkLocalPath) — unless wildcard mode is on (roots unset or '*',
+   * cfg.allowAllRoots): then the root list is the system's drive roots and
+   * any directory may be listed.  Dotfiles hidden. */
+  /** Wildcard-mode root list: existing drive letters on Windows, '/' elsewhere. */
+  const fsRoots = () => {
+    if (process.platform !== 'win32') return [{ path: path.sep, name: path.sep, ok: true }];
+    const out = [];
+    for (let c = 65; c <= 90; c++) {
+      const drive = `${String.fromCharCode(c)}:\\`;
+      try { fs.realpathSync(drive); out.push({ path: drive, name: drive, ok: true }); }
+      catch { /* absent / not-ready drive */ }
+    }
+    return out;
+  };
   app.post('/api/v1/fs/browse', async (req) => {
     const pathCfg = pathCfgFor(req);
     if (!pathCfg.allowLocalPath) {
@@ -205,14 +220,21 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const raw = typeof body.path === 'string' ? body.path.trim() : '';
     const rootReals = [];
-    const roots = cfg.allowedRoots.map((r) => {
-      try {
-        const rp = fs.realpathSync(r);
-        rootReals.push(rp);
-        return { path: rp, name: path.basename(rp) || rp, ok: true };
-      } catch { return { path: r, name: path.basename(r) || r, ok: false }; }
-    });
-    if (!raw) return { roots, cwd: null, dirs: [], files: [], parent: null };
+    let roots;
+    if (pathCfg.allowAllRoots) {
+      roots = fsRoots();
+    } else {
+      roots = cfg.allowedRoots.map((r) => {
+        try {
+          const rp = fs.realpathSync(r);
+          rootReals.push(rp);
+          return { path: rp, name: path.basename(rp) || rp, ok: true };
+        } catch { return { path: r, name: path.basename(r) || r, ok: false }; }
+      });
+    }
+    if (!raw) {
+      return { roots, cwd: null, dirs: [], files: [], parent: null, wildcard: pathCfg.allowAllRoots };
+    }
     const dir = checkLocalPath(raw, pathCfg, { kind: 'dir', label: 'path' });
     const CAP = 1000;
     const dirs = []; const files = [];
@@ -231,9 +253,14 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     dirs.sort((a, b) => a.localeCompare(b, 'zh'));
     files.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
     // offer "up" only while the parent still sits inside an allowed root
+    // (wildcard mode: no root ceiling — climb to the filesystem top)
     const parent = path.dirname(dir);
-    const insideRoot = rootReals.some((rr) => parent === rr || (parent + path.sep).startsWith(rr + path.sep));
-    return { roots, cwd: dir, parent: insideRoot && parent !== dir ? parent : null, dirs, files, truncated };
+    const insideRoot = pathCfg.allowAllRoots
+      || rootReals.some((rr) => parent === rr || (parent + path.sep).startsWith(rr + path.sep));
+    return {
+      roots, cwd: dir, parent: insideRoot && parent !== dir ? parent : null,
+      dirs, files, truncated, wildcard: pathCfg.allowAllRoots,
+    };
   });
 
   /* ---- IP whitelist management (localhost only) ---- */

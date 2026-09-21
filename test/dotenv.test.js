@@ -98,6 +98,56 @@ test('parseAllowedRoots: quotes, empties and duplicates collapse', () => {
   assert.deepEqual(parseAllowedRoots(undefined, 'win32'), []);
 });
 
+test('parseAllowedRoots: * passes through as the wildcard marker on both platforms', () => {
+  assert.deepEqual(parseAllowedRoots('*', 'win32'), ['*']);
+  assert.deepEqual(parseAllowedRoots('*', 'linux'), ['*']);
+  assert.deepEqual(parseAllowedRoots('*;D:\\data', 'win32'), ['*', 'D:\\data']);
+});
+
+test('loadConfig: MGO_ALLOWED_ROOTS unset or * means wildcard (allowAllRoots)', () => {
+  const saved = process.env.MGO_ALLOWED_ROOTS;
+  try {
+    delete process.env.MGO_ALLOWED_ROOTS;
+    let cfg = loadConfig({});
+    assert.equal(cfg.allowAllRoots, true, 'unset roots must default to whole-filesystem wildcard');
+    assert.deepEqual(cfg.allowedRoots, []);
+
+    process.env.MGO_ALLOWED_ROOTS = '*';
+    cfg = loadConfig({});
+    assert.equal(cfg.allowAllRoots, true);
+    assert.deepEqual(cfg.allowedRoots, []);
+
+    process.env.MGO_ALLOWED_ROOTS = '*' + path.delimiter + '/data/x';
+    cfg = loadConfig({});
+    assert.equal(cfg.allowAllRoots, true, 'a * entry flips wildcard on; explicit roots are kept too');
+    assert.deepEqual(cfg.allowedRoots, [path.resolve('/data/x')]);
+
+    process.env.MGO_ALLOWED_ROOTS = '/data/x';
+    cfg = loadConfig({});
+    assert.equal(cfg.allowAllRoots, false, 'explicit roots mean explicit containment');
+    assert.deepEqual(cfg.allowedRoots, [path.resolve('/data/x')]);
+  } finally {
+    if (saved === undefined) delete process.env.MGO_ALLOWED_ROOTS;
+    else process.env.MGO_ALLOWED_ROOTS = saved;
+  }
+});
+
+test('loadConfig: an explicit allowedRoots override forces containment (hermetic tests)', () => {
+  const saved = process.env.MGO_ALLOWED_ROOTS;
+  process.env.MGO_ALLOWED_ROOTS = '*';
+  try {
+    const cfg = loadConfig({ allowedRoots: ['/data/y'] });
+    assert.equal(cfg.allowAllRoots, false,
+      'an explicit override is a containment declaration — wildcard must not leak in from .env');
+    assert.deepEqual(cfg.allowedRoots, [path.resolve('/data/y')]);
+    assert.equal(loadConfig({ allowedRoots: [], allowAllRoots: true }).allowAllRoots, true,
+      'allowAllRoots can still be requested explicitly alongside an override');
+  } finally {
+    if (saved === undefined) delete process.env.MGO_ALLOWED_ROOTS;
+    else process.env.MGO_ALLOWED_ROOTS = saved;
+  }
+});
+
 test('findMgoBinary: explicit override wins, sibling ../MGO layout probed', () => {
   assert.equal(findMgoBinary('/tmp/custom-mgo'), '/tmp/custom-mgo');
   // whatever is on this machine, discovery must return an absolute path or the PATH name
