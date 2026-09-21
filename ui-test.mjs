@@ -58,6 +58,12 @@ const step = async (name, fn) => {
   }
 };
 
+/** 上传流程前置：FilePicker 默认段是「🖥 服务器路径」（本机访问恒可用），
+ *  走文件上传通道前先切回「⬆ 上传」（已在上传模式时点击是无害的 no-op）。 */
+const toUploadMode = async (pg = page) => {
+  await pg.click('#fpkSeg button[data-m="upload"]');
+};
+
 // The whitelist suite step writes workspace/whitelist.json.  Snapshot the live
 // entries first so a test run against a real deployment can never lock anyone
 // out.  IMPORTANT: only trust the snapshot if the GET actually succeeded —
@@ -167,6 +173,7 @@ await step('4 表单输入实时生成 JSON 预览（含 normals=false）', asyn
 let jobId;
 await step('5 表单上传 TIF → 提交 → 新行出现 → SSE 实时到 succeeded', async () => {
   const before = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
+  await toUploadMode();
   await page.setInputFiles('#file', TIF);
   await page.click('#submit');
   jobId = await waitForNewJob(before, 'test_terrain.tif');
@@ -208,6 +215,7 @@ await step('6 进度条 100% 且生成 viewer 深链', async () => {
 /* ---------- 7. zod validation surfaces in UI ---------- */
 await step('7 偶数 samplesPerTile → 界面显示 422 VALIDATION', async () => {
   await page.fill('#f_samplesPerTile', '64');
+  await toUploadMode();
   await page.setInputFiles('#file', TIF);
   await page.click('#submit');
   await page.waitForFunction(() => document.querySelector('#msg').textContent.length > 0, null, { timeout: 8000 });
@@ -246,6 +254,7 @@ let multiJobId;
 await step('8b tiles 多文件：统一参数转换 + 合并 tileset（console 上传两个模型）', async () => {
   const before = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
   await page.selectOption('#type', 'tiles');
+  await toUploadMode();
   await page.waitForSelector('#inputArea input#file[multiple]');
   await page.setInputFiles('#file', [OBJ_A, OBJ_B]);
   await page.waitForFunction(() => /2 个文件/.test(document.querySelector('#dropMeta').textContent),
@@ -337,6 +346,7 @@ await step('8e tiles 属性绑定提交：props 附件进 argv（--bim-*），bi
       'objectName,楼层,结构\nCubeA,3,钢筋混凝土\nCubeB,5,钢结构\n');
   const before = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
   await page.selectOption('#type', 'tiles');
+  await toUploadMode();
   await page.waitForSelector('#inputArea input#file');
   await page.$$eval('#paramForm details.grp', (ds) => ds.forEach((d) => { d.open = true; }));
   await page.setInputFiles('#file', OBJ_A);
@@ -393,6 +403,7 @@ await step('8c tiles+贴图 ZIP（文件树上传）：贴图与模型同层保�
   const ZIP_A = `/tmp/${ZIPNAME}.zip`;
   fs.writeFileSync(ZIP_A, zip2);
   await page.selectOption('#type', 'tiles');
+  await toUploadMode();
   await page.waitForSelector('#file');
   await page.setInputFiles('#file', ZIP_A);   // 统一入口：ZIP 直接进文件区
   await page.waitForFunction((zn) => new RegExp(zn + '\\.zip.*ZIP 文件树').test(document.querySelector('#dropMeta').textContent), ZIPNAME,
@@ -428,6 +439,7 @@ await step('8c tiles+贴图 ZIP（文件树上传）：贴图与模型同层保�
   ]);
   const ZIP_B = `/tmp/${ZIPNAME}-1.zip`;
   fs.writeFileSync(ZIP_B, zip1);
+  await toUploadMode();
   await page.setInputFiles('#file', ZIP_B);
   const before2 = new Set((await (await fetch(`${BASE}/api/v1/jobs?limit=50`)).json()).items.map((x) => x.id));
   await page.click('#submit');
@@ -660,6 +672,7 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
   });
   await step('14 拖拽区显示所选文件名与大小', async () => {
     await consolePage.selectOption('#type', 'terrain');
+    await toUploadMode(consolePage);
     await consolePage.setInputFiles('#file', TIF);
     await consolePage.waitForFunction(() => /test_terrain\.tif/.test(document.querySelector('#dropMeta').textContent));
   });
@@ -669,6 +682,7 @@ await step('12 viewer 无参打开 → 近期成功任务下拉可加载', async
     if (!opts.some((x) => x.includes('🏗'))) throw new Error('图标缺失: ' + opts.join('|'));
   });
   await step('16 提交成功 → Toast 自动出现并消失', async () => {
+    await toUploadMode(consolePage);
     await consolePage.setInputFiles('#file', TIF);
     await consolePage.click('#submit');
     await consolePage.waitForFunction(() => document.querySelectorAll('.toast').length > 0, null, { timeout: 8000 });
@@ -912,7 +926,12 @@ await step('26 FilePicker：模式切换 + 跨目录多选/过滤/面包屑 + �
   await page.waitForSelector('#type');
   await page.selectOption('#type', 'tiles');
   await page.waitForSelector('#fpkSeg');
-  if (await page.isVisible('#inputPath')) throw new Error('默认应为上传模式，路径框不可见');
+  // 默认段 = 「🖥 服务器路径」（本机访问恒可用）：路径框直接可见、上传区隐藏
+  if (!(await page.isVisible('#inputPath'))) throw new Error('默认应为服务器路径模式，路径框不可见');
+  if (await page.isVisible('#file')) throw new Error('默认路径模式下上传区未隐藏');
+  await page.click('#fpkSeg button[data-m="upload"]');   // 切到上传：镜像互换
+  if (await page.isVisible('#inputPath')) throw new Error('切到上传模式后路径框未隐藏');
+  if (!(await page.isVisible('#file'))) throw new Error('上传模式下上传区未显示');
   await page.click('#fpkSeg button[data-m="path"]');
   if (!(await page.isVisible('#inputPath'))) throw new Error('切到路径模式后输入框未显示');
   if (await page.isVisible('#file')) throw new Error('路径模式下上传区未隐藏');

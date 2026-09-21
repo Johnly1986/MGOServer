@@ -319,7 +319,7 @@ sequenceDiagram
 | GET | `/api/v1/health` | 存活探针：`{status, uptime, version, mgo:{path, version, hasOsgb}}` |
 | GET | `/api/v1/capabilities` | 能力发现：子命令清单、`osgb` 是否可用（F9）、限额参数 |
 | POST | `/api/v1/jobs` | 创建任务（multipart：`file`+`options`；或 JSON：`inputPath`/`inputUrl` 直读模式） |
-| POST | `/api/v1/fs/browse` | 控制台「服务器路径」模式的只读目录浏览（`MGO_ALLOW_LOCAL_PATH=1` 才启用；POST 以沿用写 IP 闸门；仅 `MGO_ALLOWED_ROOTS` 内，realpath 防逃逸，隐藏文件不列） |
+| POST | `/api/v1/fs/browse` | 控制台「服务器路径」模式的只读目录浏览（远程客户端需 `MGO_ALLOW_LOCAL_PATH=1`，本机 127.0.0.1/::1 访问恒可用；POST 以沿用写 IP 闸门；仅 `MGO_ALLOWED_ROOTS` 内，realpath 防逃逸，隐藏文件不列） |
 | GET | `/api/v1/jobs` | 任务列表（`?type=&status=&cursor=&limit=`） |
 | GET | `/api/v1/jobs/{id}` | 任务详情（含 progress、artifacts、error） |
 | GET | `/api/v1/jobs/{id}/events` | **SSE** 进度/状态事件流 |
@@ -349,7 +349,7 @@ POST /api/v1/jobs            Content-Type: application/json     # 同机直读�
   { "type": "tiles", "inputPaths": ["D:/a.fbx","D:/b.obj"], …params }  # 仅 tiles 多文件
 ```
 
-`inputPath`/`inputPaths` 与 `file` 二选一；本地路径默认关闭（`MGO_ALLOW_LOCAL_PATH=1` 才启用），并限制在 `MGO_ALLOWED_ROOTS` 白名单目录内（防任意文件读取）。
+`inputPath`/`inputPaths` 与 `file` 二选一；本地路径对远程客户端默认关闭（`MGO_ALLOW_LOCAL_PATH=1` 才启用；本机 127.0.0.1/::1 访问恒可用），并限制在 `MGO_ALLOWED_ROOTS` 白名单目录内（防任意文件读取）。
 
 **tiles 多文件（统一参数 + 合并）**：`type:"tiles"` 接受多个输入（multipart 重复 `file`，或 JSON
 `inputPaths`）。所有输入共用 options 里同一套转换参数（投影/原点/配准/简化/LOD… 对每个文件生效），
@@ -391,8 +391,10 @@ POST /api/v1/jobs            Content-Type: application/json     # 同机直读�
 ZIP / 整个文件夹，OSGB 与 tiles/mesh 同组件，走 relPaths 或 ZIP 树通道）；服务器路径模式显示
 `inputPath` 文本框 +「📂 浏览…」按钮，点开只读目录浏览器（`POST /api/v1/fs/browse`）逐级点选
 `MGO_ALLOWED_ROOTS` 内的目录/文件（tiles 可多选回填逗号串，点「选择当前文件夹」取整目录原地树
-处理）。切换段**恒渲染**（组件形态稳定、功能可发现）：服务端未开 `MGO_ALLOW_LOCAL_PATH`
-时「服务器路径」段置灰不可点，tooltip 直接写明开启方式；「📂 浏览…」按钮随路径面板一并禁用。
+处理）。**默认段即「🖥 服务器路径」**（可用时）——控制台主场景是服务器侧数据原地转换；切换段
+**恒渲染**（组件形态稳定、功能可发现）：远程客户端且服务端未开 `MGO_ALLOW_LOCAL_PATH` 时
+「服务器路径」段置灰不可点（本机 127.0.0.1/::1 访问恒可用），tooltip 直接写明开启方式；
+「📂 浏览…」按钮随路径面板一并禁用。
 
 #### 6.3.2 公共参数对象（跨类型复用）
 
