@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseDotEnv, loadDotEnv } from '../src/dotenv.js';
-import { loadConfig, findMgoBinary, PKG_ROOT } from '../src/config.js';
+import { loadConfig, findMgoBinary, parseAllowedRoots, PKG_ROOT } from '../src/config.js';
 
 test('parseDotEnv: KEY=VALUE, comments, quotes, blank lines, export prefix', () => {
   const p = parseDotEnv([
@@ -64,6 +64,38 @@ test('config defaults: public bind, loopback-only proxy trust', () => {
       else process.env[k] = saved[k];
     }
   }
+});
+
+test('parseAllowedRoots: POSIX splits on :', () => {
+  assert.deepEqual(parseAllowedRoots('/data/incoming:/data/prj', 'linux'),
+    ['/data/incoming', '/data/prj']);
+  assert.deepEqual(parseAllowedRoots(' /a : /b ', 'linux'), ['/a', '/b']);
+});
+
+test('parseAllowedRoots: Windows splits on ;', () => {
+  assert.deepEqual(parseAllowedRoots('D:\\data;E:\\prj', 'win32'), ['D:\\data', 'E:\\prj']);
+  // drive-letter colons must survive the split
+  assert.deepEqual(parseAllowedRoots('C:\\data', 'win32'), ['C:\\data']);
+  assert.deepEqual(parseAllowedRoots('C:/data/models', 'win32'), ['C:/data/models']);
+  // UNC shares stay whole
+  assert.deepEqual(parseAllowedRoots('\\\\srv\\share;D:\\x', 'win32'), ['\\\\srv\\share', 'D:\\x']);
+});
+
+test('parseAllowedRoots: Windows tolerates POSIX-habit : glued drive paths', () => {
+  // the classic Windows misconfiguration: no ';' anywhere, so the whole value
+  // used to become one bogus path and the file dialog listed nothing
+  assert.deepEqual(parseAllowedRoots('D:\\data:D:\\prj', 'win32'), ['D:\\data', 'D:\\prj']);
+  assert.deepEqual(parseAllowedRoots('C:/a:C:/b:C:/c', 'win32'), ['C:/a', 'C:/b', 'C:/c']);
+  assert.deepEqual(parseAllowedRoots('D:\\data;C:/x:C:/y', 'win32'), ['D:\\data', 'C:/x', 'C:/y']);
+});
+
+test('parseAllowedRoots: quotes, empties and duplicates collapse', () => {
+  assert.deepEqual(parseAllowedRoots('"D:\\a";\'D:\\b\'', 'win32'), ['D:\\a', 'D:\\b']);
+  assert.deepEqual(parseAllowedRoots('"/data/a"', 'linux'), ['/data/a']);
+  assert.deepEqual(parseAllowedRoots(' ;; ', 'win32'), []);
+  assert.deepEqual(parseAllowedRoots('', 'linux'), []);
+  assert.deepEqual(parseAllowedRoots('/a:/a', 'linux'), ['/a']);
+  assert.deepEqual(parseAllowedRoots(undefined, 'win32'), []);
 });
 
 test('findMgoBinary: explicit override wins, sibling ../MGO layout probed', () => {

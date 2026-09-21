@@ -144,6 +144,22 @@ async function main() {
         + 'fix MGO_BINARY (or build the C++ toolkit at ../MGO) and restart',
     });
   }
+  // Loud on purpose: a wrong MGO_ALLOWED_ROOTS is invisible at startup — the
+  // console file browser just shows an empty / 不存在 list, which reads as a
+  // browser bug instead of a configuration one (most common on Windows: the
+  // POSIX ':' separator habit, or a .env copied from a Linux box).
+  if (!cfg.allowedRoots.length) {
+    app.log.warn('MGO_ALLOWED_ROOTS is empty — the console 服务器路径 file browser has '
+      + "no roots to list; set it in .env and restart (Windows example: MGO_ALLOWED_ROOTS=D:\\data;E:\\prj — ';'-separated, paths must exist)");
+  } else {
+    const missing = cfg.allowedRoots.filter((r) => {
+      try { return !fs.statSync(r).isDirectory(); } catch { return true; }
+    });
+    if (missing.length) {
+      app.log.warn(`MGO_ALLOWED_ROOTS entries missing on this machine: ${missing.join(', ')} — `
+        + 'the file browser marks them 不存在 and cannot browse them; fix .env and restart');
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

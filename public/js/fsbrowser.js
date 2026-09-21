@@ -149,6 +149,21 @@ export function fsRender() {
         onclick: () => { if (r.ok) fsLoad(r.path); } },
         (r.ok ? '📁 ' : '🚫 ') + r.name + (r.ok ? '' : '（不存在）')));
     }
+    // 空态提示：请求成功但没有任何可浏览根目录时不许无声空白——那会被当成
+    // 「弹框坏了」而不是「配置没生效」。两个 Windows 高频成因各给一句：
+    // ① MGO_ALLOWED_ROOTS 根本没配；② 配了但路径在服务器上不存在
+    //   （.env 从 Linux 拷贝 / POSIX 的 ':' 分隔习惯在 Windows 失效）。
+    if (!list.children.length) {
+      list.append(el('div', { class: 'fsEmpty' },
+        '未配置 MGO_ALLOWED_ROOTS —— 服务器文件浏览器没有可浏览的根目录',
+        el('div', { style: 'margin-top:6px;font-size:12px;color:#93a0b4' },
+          '在服务器 .env 中设置并重启（Windows 用分号分隔，路径需真实存在）：MGO_ALLOWED_ROOTS=D:\\data;E:\\prj')));
+    } else if (!(d.roots ?? []).some((r) => r.ok)) {
+      list.append(el('div', { class: 'fsEmpty' },
+        '配置的根目录在服务器上都不存在（路径写错，或 .env 从别的系统拷贝而来）',
+        el('div', { style: 'margin-top:6px;font-size:12px;color:#93a0b4' },
+          'Windows 示例：MGO_ALLOWED_ROOTS=D:\\data;E:\\prj（分号分隔，不能用 Linux 的冒号）；改完重启服务')));
+    }
   } else {
     const q = fsState.filter.trim().toLowerCase();
     if (d.parent) list.append(el('button', { class: 'fsItem', onclick: () => fsLoad(d.parent) },

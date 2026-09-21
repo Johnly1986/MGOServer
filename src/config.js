@@ -96,6 +96,41 @@ export function findTilesToolsCli(explicit) {
   return null;
 }
 
+/**
+ * Parse MGO_ALLOWED_ROOTS into raw path strings.
+ *
+ * The primary separator is path.delimiter (';' on Windows, ':' on POSIX), but
+ * values written with POSIX habits must still work on Windows: `D:\data:D:\prj`
+ * contains no ';' and would otherwise silently become ONE bogus path — the
+ * classic "server file dialog lists nothing" report from Windows deployments
+ * (a lone ':' is also a legal drive-letter character there, so the colon alone
+ * cannot be the separator).  On win32 a segment made of drive-absolute paths
+ * glued with ':' is therefore re-split at each `X:\` / `X:/` boundary.
+ * Per-segment quotes from hand-edited .env files are stripped; empty and
+ * duplicate entries collapse.
+ */
+export function parseAllowedRoots(value, platform = process.platform) {
+  const sep = platform === 'win32' ? ';' : ':';
+  const unquote = (s) => (s.length > 1
+    && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
+    ? s.slice(1, -1) : s);
+  let segs = String(value ?? '').split(sep).map((s) => unquote(s.trim())).filter(Boolean);
+  if (platform === 'win32') {
+    const out = [];
+    for (const seg of segs) {
+      // whole segment = one or more drive-absolute paths glued with ':' —
+      // e.g. `C:\data:C:\prj` or the POSIX-style habit `C:/data:C:/prj`
+      if (/^[A-Za-z]:[\\/][^:]*(:[A-Za-z]:[\\/][^:]*)*$/.test(seg)) {
+        out.push(...seg.match(/[A-Za-z]:[\\/][^:]*/g));
+      } else {
+        out.push(seg);
+      }
+    }
+    segs = out;
+  }
+  return [...new Set(segs)];
+}
+
 export function loadConfig(overrides = {}) {
   const base = {
     host: env('MGO_HOST', '0.0.0.0'),
@@ -113,8 +148,8 @@ export function loadConfig(overrides = {}) {
     jobTimeoutS: envInt('MGO_JOB_TIMEOUT_S', 4 * 3600),
     ttlDays: envInt('MGO_TTL_DAYS', 7),
     allowLocalPath: envBool('MGO_ALLOW_LOCAL_PATH', false),
-    allowedRoots: [...new Set(String(env('MGO_ALLOWED_ROOTS', ''))
-      .split(path.delimiter).filter(Boolean).map((p) => path.resolve(p)))],
+    allowedRoots: [...new Set(parseAllowedRoots(env('MGO_ALLOWED_ROOTS', ''), process.platform)
+      .map((p) => path.resolve(p)))],
     publicDir: path.join(PKG_ROOT, 'public'),
     cesiumLocalEntry: path.join(PKG_ROOT, 'public', 'cesium', 'Cesium.js'),
     logLevel: env('MGO_LOG_LEVEL', 'info'),
