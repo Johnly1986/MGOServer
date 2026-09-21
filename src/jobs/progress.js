@@ -5,13 +5,14 @@
  *   [TerrainConverter] Progress: 12/57
  *   [TerrainConverter] Done: 57/57
  *   [OSGBConverter] Done: 214 tile(s) -> /path/out/tileset.json
+ *   [OSGBSimplify] Progress: 8/214        (mesh simplification phase)
  *   [ImageTiler] Progress: 3/7            (per-LEVEL granularity)
  *
  * Design: docs/VISUALIZATION_SERVICE_DESIGN.md §8.  Parsing failures NEVER
  * fail a job — the caller simply falls back to status-only progress.
  */
 
-const MODULES = 'TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|ImageTiler';
+const MODULES = 'TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|OSGBSimplify|ImageTiler';
 
 const RE_PROGRESS = new RegExp(`^\\[(${MODULES})\\]\\s*Progress:\\s*(\\d+)/(\\d+)\\s*$`);
 const RE_DONE_FRAC = new RegExp(`^\\[(${MODULES})\\]\\s*Done:\\s*(\\d+)/(\\d+)\\b`);
@@ -41,7 +42,8 @@ export class ProgressParser {
         percent = Math.max(percent, this.last.percent);
       }
       const phase = module === 'ImageTiler' ? 'levels'
-        : module === 'OSGBReader' ? 'read' : 'tiles';
+        : module === 'OSGBReader' ? 'read'
+        : module === 'OSGBSimplify' ? 'simplify' : 'tiles';
       this.last = { done, total, percent, phase, module };
       return { type: 'progress', done, total, percent, phase, module, detail: line.trim() };
     }

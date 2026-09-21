@@ -541,8 +541,8 @@ event: status     data: {"status":"succeeded","artifacts":[…],"viewerUrl":"…
 集中式行解析器（`progress.js`），对 F3 协议逐行匹配：
 
 ```js
-const RE_PROGRESS = /^\[(TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|ImageTiler)\]\s*Progress:\s*(\d+)\/(\d+)/;
-const RE_DONE     = /^\[(TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|ImageTiler)\]\s*Done:\s*(.*)/;
+const RE_PROGRESS = /^\[(TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|OSGBSimplify|ImageTiler)\]\s*Progress:\s*(\d+)\/(\d+)/;
+const RE_DONE     = /^\[(TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|OSGBSimplify|ImageTiler)\]\s*Done:\s*(.*)/;
 const RE_FAIL     = /^\[(TerrainConverter|TilesConverter|OSGBConverter|ImageTiler)\]\s*(Failed|.*failed|.*失败).*$/;
 ```
 
@@ -551,7 +551,8 @@ const RE_FAIL     = /^\[(TerrainConverter|TilesConverter|OSGBConverter|ImageTile
 1. **ImageTiler 的 X/Y 是"层级/总层级"粒度**（`ImageTiler.cpp:507` 用 `levelIdx`），百分比是粗粒度——UI 文案显示"第 X/Y 级"，不伪装瓦片级精度；
 2. TilesConverter 进度行在瓦片写盘阶段输出，LOD 聚合阶段（无进度行）用 `phase:"building-hierarchy"` 假性心跳（每 5s 一条 SSE log 事件），避免"卡死"观感；
 3. 解析失败**绝不**使任务失败——退化为 `source:"file-scan"`（每 3s 统计 `out/` 文件数）或 `source:"none"`，只保状态正确；
-4. 黄金样例测试：从真实运行日志截取若干 stdout 片段入库 `test/fixtures/`，防协议漂移（对应 §4.5 风险 1）。
+4. **OSGBSimplify** 是 OSGB 转换网格简化阶段的独立模块标签（`OSGBConverter.cpp` SimplifyGridCells），不与写出阶段共用 `[OSGBConverter]`：两者 total 相同时，单调钳制（module+total 相同才钳制）会让写出进度卡在 100%；
+5. 黄金样例测试：从真实运行日志截取若干 stdout 片段入库 `test/fixtures/`，防协议漂移（对应 §4.5 风险 1）。
 
 ---
 
