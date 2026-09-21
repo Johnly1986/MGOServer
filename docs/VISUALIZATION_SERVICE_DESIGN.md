@@ -425,7 +425,6 @@ ZIP / 整个文件夹，OSGB 与 tiles/mesh 同组件，走 relPaths 或 ZIP 树
   "type": "tiles",
   "zUp": true,                 // -Z
   "rootGeometricError": 500,   // -e
-  "tileGeometricError": 50,    // -t
   "refine": "ADD",             // -r ADD|REPLACE
   "origin": [445000, 3260000, 0],   // --origin
   "minBlockDistance": 100,     // --min-block
@@ -723,7 +722,6 @@ CMD ["node", "src/server.js"]
 | （服务端生成 `-o`） | `-o` | 全部 | 恒为 `workspace/jobs/{id}/out`（mesh 为 `out/{stem}.{outputFormat}`），不向调用方暴露 |
 | `zUp` | `-Z` | tiles | bool |
 | `rootGeometricError` | `-e` | tiles | number>0 |
-| `tileGeometricError` | `-t` | tiles | number>0 |
 | `refine` | `-r` | tiles | enum ADD/REPLACE |
 | `minBlockDistance` | `--min-block` | tiles | number |
 | `maxLod` / `maxLODLevels` | `--max-lod` | tiles/terrain/osgb | int>0 |

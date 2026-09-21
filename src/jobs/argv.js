@@ -95,7 +95,6 @@ export function buildArgs(job, io) {
     case 'tiles':
       if (p.zUp) a.push('-Z');
       if (p.rootGeometricError !== undefined) a.push('-e', j(p.rootGeometricError));
-      if (p.tileGeometricError !== undefined) a.push('-t', j(p.tileGeometricError));
       if (p.refine) a.push('-r', p.refine);
       if (p.minBlockDistance !== undefined) a.push('--min-block', j(p.minBlockDistance));
       if (p.maxLod !== undefined) a.push('--max-lod', j(p.maxLod));

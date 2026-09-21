@@ -69,7 +69,6 @@ export const tilesSchema = z.object({
   type: z.literal('tiles'),
   zUp: z.boolean().optional(),
   rootGeometricError: num.gt(0).optional(),
-  tileGeometricError: num.gt(0).optional(),
   refine: z.enum(['ADD', 'REPLACE']).optional(),
   origin: vec3.optional(),
   minBlockDistance: num.gt(0).optional(),

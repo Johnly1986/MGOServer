@@ -7,7 +7,7 @@ const P = (o) => jobSchema.parse(o);
 
 test('tiles: full mapping matches mgo CLI flags', () => {
   const params = P({
-    type: 'tiles', zUp: true, rootGeometricError: 500, tileGeometricError: 50,
+    type: 'tiles', zUp: true, rootGeometricError: 500,
     refine: 'REPLACE', origin: [445000, 3260000, 0], minBlockDistance: 100, maxLod: 5,
     proj: { crs: 'EPSG:4547' },
     georef: { mode: 'multipos', fitOrder: 2, controlPointsPath: '/data/cp.csv' },
@@ -17,7 +17,7 @@ test('tiles: full mapping matches mgo CLI flags', () => {
     { input: '/in/a.fbx', out: '/out' });
   assert.deepEqual(args, [
     'tiles', '-i', '/in/a.fbx', '-o', '/out',
-    '-Z', '-e', '500', '-t', '50', '-r', 'REPLACE',
+    '-Z', '-e', '500', '-r', 'REPLACE',
     '--min-block', '100', '--max-lod', '5',
     '--prj', 'EPSG:4547', '--origin', '445000,3260000,0',
     '--georef', 'multipos', '--cps', '/data/cp.csv', '--fit-order', '2',

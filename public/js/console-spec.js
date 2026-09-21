@@ -136,7 +136,6 @@ export const BASIC = {
     ]},
     { name: '分块与 LOD', fields: [
       F('rootGeometricError', 'num', '根几何误差（米）', { ph: '留空=按包围盒自动', pos: true, hint: '最粗一级瓦片的屏幕误差预算；越大首屏越快、远景越糊' }),
-      F('tileGeometricError', 'num', '瓦片几何误差（米）', { ph: '留空=自动', pos: true, hint: '相邻 LOD 层级间的误差步进' }),
       F('refine', 'select', '细化模式', { opts: ['', 'ADD', 'REPLACE'], hint: 'ADD=子瓦片叠加在父瓦片上（地形常用），REPLACE=子瓦片替换父瓦片（白模常用）' }),
       F('minBlockDistance', 'num', '最小分块距离（米）', { ph: '留空=自动', pos: true, hint: '两物体距离小于此值时合并为一块，不再细分' }),
       F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1, hint: '模型瓦片最大细分层级；越大越精细，耗时成倍增加' }),
