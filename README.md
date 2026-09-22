@@ -39,7 +39,7 @@ MGOServer 是 [MGO](https://github.com/Johnly1986/MGO)（C++17 三维切片引�
 
 ## 🚀 快速开始
 
-> 唯一依赖：**Node.js ≥ 20**。切片引擎无需编译，安装脚本自动下载。
+> 依赖：**Node.js ≥ 20**。
 
 ```bash
 git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
@@ -57,8 +57,7 @@ REST API 提交：
 curl -F 'options={"type":"terrain"}' -F file=@dem.tif http://127.0.0.1:8080/api/v1/jobs
 
 # 模型转 3D Tiles：多文件上传，options 参数对所有文件统一生效；带外部贴图时打包 ZIP 上传
-curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' \
-  -F file=@tower.fbx -F file=@podium.obj http://127.0.0.1:8080/api/v1/jobs
+curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' -F file=@tower.fbx -F file=@podium.obj http://127.0.0.1:8080/api/v1/jobs
 ```
 
 | 端点 | 说明 |
@@ -107,10 +106,3 @@ npm i cesium@1.111 --no-save && npm run sync:cesium
 [Apache-2.0](LICENSE)（商业与非商业用途均免费），第三方依赖声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 引擎构建验证：MSVC 2022（Windows）、GCC 9+（Linux）。
 
----
-
-<div align="center">
-
-**MGOServer** — 3D Tiles · CesiumJS · OSGB 倾斜摄影 · BIM 属性 · GIS · DEM / 影像切片 · quantized-mesh · Digital Twin · WebGIS
-
-</div>
