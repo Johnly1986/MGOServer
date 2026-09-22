@@ -53,11 +53,11 @@ function createFilePicker(type) {
         : multi ? '拖入 模型文件（可多选）· 模型+贴图 ZIP · 或整个文件夹'
         : type === 'mesh' ? '拖入 模型文件 · 模型+贴图 ZIP · 或整个文件夹'
         : '点击选择或拖拽文件到此处'),
-      treeMode ? el('span', { class: 'txt', style: 'font-size:11.5px' },
-        el('span', {}, osgb ? '点击' : '点击选择文件；带贴图请拖文件夹/ZIP（也可',
-          el('a', { href: '#', id: 'dirPickLink', class: 'dirLink' }, '点这里选文件夹'),
-          osgb ? '，或把整个 OSGB 目录 / ZIP 拖进来（超大目录用「服务器路径」免上传）' : '）；只传裸模型文件会丢贴图')) : null,
-      el('span', { class: 'meta', id: 'dropMeta' }, '')));
+      treeMode ? 
+        el('span', { class: 'txt', style: 'font-size:11.5px' },
+        el('span', {}, '点击', 
+        el('a', { href: '#', id: 'dirPickLink', class: 'dirLink' }, '点这里选文件夹'), '')) : null,
+        el('span', { class: 'meta', id: 'dropMeta' }, '')));
   const fi = drop.querySelector('#file');
   fi.onchange = () => {
     fpk.treePick = null; updateDrop();
@@ -111,8 +111,8 @@ function createFilePicker(type) {
   const pathPane = el('div', { hidden: '' },
     el('div', { class: 'fsRow' }, pathInput, allowPath ? browseBtn : null),
     el('div', { class: 'hint' }, osgb ? 'OSGB 整目录原地处理（不上传、不搬动文件）'
-      : type === 'tiles' ? '可直接填模型文件夹（原地处理，自动识别并合并文件夹内全部模型）；或逗号分隔多个模型文件'
-      : type === 'mesh' ? '可直接填「模型+贴图」文件夹（原地处理；含多个模型时用下方「模型路径」指定其一）'
+      : type === 'tiles' ? '可直接填模型文件夹或逗号分隔多个模型文件'
+      : type === 'mesh' ? '可直接填文件夹'
       : '服务器本地路径，免上传、原地处理'));
 
   /* ---- 模式切换 ---- */
@@ -129,12 +129,11 @@ function createFilePicker(type) {
   };
   // 切换段恒在：路径模式对该客户端不可用时，路径段置灰并以 tooltip 说明开启方式
   seg = el('div', { class: 'fpkSeg', id: 'fpkSeg' },
-    el('button', { type: 'button', 'data-m': 'upload', onclick: () => setMode('upload') }, '⬆ 上传'),
     allowPath
       ? el('button', { type: 'button', 'data-m': 'path', onclick: () => setMode('path') }, '🖥 服务器路径')
-      : el('button', { type: 'button', 'data-m': 'path', disabled: '',
-        title: '远程访问未启用服务器路径模式——在服务器设置 MGO_ALLOW_LOCAL_PATH=1 与 MGO_ALLOWED_ROOTS 后重启即可（本机 127.0.0.1 访问此模式恒可用）' },
-      '🖥 服务器路径'));
+      : el('button', { type: 'button', 'data-m': 'path', disabled: '', title: '无权访问服务器文件' }, '🖥 服务器路径'),
+      el('button', { type: 'button', 'data-m': 'upload', onclick: () => setMode('upload') }, '⬆ 上传')
+      );
   root.append(seg);
   root.append(upPane, pathPane);
   setMode(mode);   // 初始段高亮 + 面板可见性（默认即「服务器路径」，若可用）

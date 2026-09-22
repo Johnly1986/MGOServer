@@ -6,12 +6,12 @@
 
 export const ICONS = { tiles: '🏗', terrain: '⛰', image: '🛰', geojson: '📍', mesh: '🧊', osgb: '📷' };
 export const DESC = {
-  tiles: '模型（FBX/OBJ 等，支持多文件）→ 3D Tile，可配准、简化；多文件统一参数转换后自动合并 tileset.json',
+  tiles: '模型（FBX/OBJ 等，支持多文件）→ 3D Tile',
   terrain: 'DEM GeoTIFF → Cesium 地形瓦片',
   image: '正射影像 GeoTIFF → TMS 瓦片',
-  geojson: 'GeoJSON → EPSG:4326',
-  mesh: '模型分组简化 / 格式转换（glb · obj · fbx）',
   osgb: 'OSGB 倾斜摄影 → 3D Tiles',
+  geojson: 'GeoJSON → EPSG:4326',
+  mesh: '模型分组简化 → 新模型格式'
 };
 export const TYPE_CN = {
   tiles: '模型转 3D Tiles', terrain: '地形切片', image: '影像切片',
@@ -42,7 +42,7 @@ export const gProj = () => el2('投影', [
   F('@prj', 'file', '或上传 .prj / .wkt 文件', { accept: '.prj,.wkt,.proj', span: true, uploadOnly: true, hint: '提供投影定义文件（「⬆ 上传」模式），上传后忽略上方文本框' }),
   F('proj.prjPath', 'pathtext', '或选择服务器投影文件（.prj / .wkt / .proj）', {
     span: true, pext: '.prj,.wkt,.proj', ph: '/data/prj/cgcs2000.prj',
-    hint: '「🖥 服务器路径」模式专用：浏览选取服务器本地投影定义文件（限 MGO_ALLOWED_ROOTS），选后忽略上方文本框；JSON 手改模式可直接写 proj.prjPath',
+    hint: '「🖥 服务器路径」模式专用：浏览选取服务器本地投影定义文件',
   }),
 ]);
 export const gOrigin = (label = '坐标原点') => el2(label, [
