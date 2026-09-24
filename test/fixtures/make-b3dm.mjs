@@ -129,12 +129,17 @@ const padJson = (obj) => {
 
 const glb = buildGlb();
 const ft = padJson({ BATCH_LENGTH: 2 });
+// legacy Batch Table 规范：JSON 属性列的值必须是「每要素一个值」的数组。
+// 写成 {0:'…',1:'…'} 这种以 batchId 为键的对象，Cesium 1.111 的加载器会把
+// 它当成二进制列引用（componentType 缺失）→ 模型加载直接失败：
+//   Property objectId requires a batch table binary.
+// 内容永远不 ready → 场景里没有构件 → 点击查看属性整条链路失效。
 let bt = padJson({
-  objectId: { 0: 'FakeBoxA', 1: 'FakeBoxB' },
-  Name: { 0: '立方体甲', 1: '立方体乙' },
-  楼层: { 0: 3, 1: 5 },
-  高度: { 0: 50.0, 1: 50.0 },
-  结构: { 0: '钢筋混凝土', 1: '钢结构' },
+  objectId: ['FakeBoxA', 'FakeBoxB'],
+  Name: ['立方体甲', '立方体乙'],
+  楼层: [3, 5],
+  高度: [50.0, 50.0],
+  结构: ['钢筋混凝土', '钢结构'],
 });
 {
   const pre = 28 + ft.length + bt.length;

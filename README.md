@@ -9,7 +9,7 @@ CesiumJS 原生流式数据 —— 浏览器上传、在线三维预览，REST A
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/Johnly1986/MGOServer/actions/workflows/ci.yml/badge.svg)](https://github.com/Johnly1986/MGOServer/actions/workflows/ci.yml)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](#-快速开始)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-brightgreen.svg)](#-快速开始)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520-brightgreen.svg)](https://nodejs.org/)
 
 <img width="1854" height="993" alt="MGOServer 控制台：上传模型 / OSGB / DEM / 影像并切片，CesiumJS 三维预览" src="https://github.com/user-attachments/assets/f8bd158d-91ac-4415-8690-a41cb639a65e" />

@@ -567,6 +567,27 @@ await step('9b viewer 点击构件查看属性：实体真实点击 + 3D Tiles �
   });
   await vp.mouse.click(clickX, clickY);
   await vp.waitForFunction(() => /未开启「属性绑定」/.test(document.querySelector('#featBody').textContent), null, { timeout: 8000 });
+  // (c2) glb 模型要素（ModelFeature）：有 getPropertyIds/getProperty/hasProperty
+  //      但没有 .content / .id —— 修复前三个分支全部漏掉，面板不展示
+  await vp.evaluate(() => {
+    const vals = { elementId: 'CubeM', Name: '构件甲', 材质: 'C30' };
+    window.__mgoViewer.scene.pick = () => ({
+      id: undefined, primitive: {}, featureId: 3, color: null,
+      hasProperty: () => true,
+      getPropertyIds: () => Object.keys(vals),
+      getProperty: (k) => vals[k],
+    });
+  });
+  await vp.mouse.click(clickX, clickY);
+  await vp.waitForFunction(() => !document.querySelector('#featPanel').hidden, null, { timeout: 8000 });
+  const modelInfo = await vp.evaluate(() => ({
+    title: document.querySelector('#featTitle').textContent,
+    tag: document.querySelector('#featTag').textContent,
+    rows: [...document.querySelectorAll('#featBody tr')].map((tr) => tr.textContent),
+  }));
+  if (!/模型要素 · featureId 3/.test(modelInfo.tag)) throw new Error('模型要素标记不符: ' + modelInfo.tag);
+  for (const want of ['构件甲', 'C30'])
+    if (!modelInfo.rows.some((r) => r.includes(want))) throw new Error('模型属性行缺 ' + want + ': ' + JSON.stringify(modelInfo.rows));
   // (d) Esc 关闭面板
   await vp.keyboard.press('Escape');
   await vp.waitForFunction(() => document.querySelector('#featPanel').hidden, null, { timeout: 5000 });

@@ -339,8 +339,10 @@ viewer.screenSpaceEventHandler.setInputAction((movement) => {
 /* ================ 点击构件查看属性 ================
  * 左键拾取（viewer.scene.pick）：
  *  - 3D Tiles：Cesium 1.111 返回 Cesium3DTileFeature（batch table 即切片时
- *    --bim-* 写入的属性）；同时兼容新版 Cesium 的 {content, properties(PropertyBag)} 形态；
- *  - Entity（GeoJSON 属性 / glb 模型）：读 entity.properties PropertyBag。
+ *    --bim-* 写入的属性）；注意要素编号在 1.111 暴露为 featureId（无 batchId）；
+ *  - glb 模型：EXT_mesh_features 要素是 ModelFeature——同样有
+ *    getPropertyIds/getProperty，但没有 .content / .id 字段，需单独识别；
+ *  - Entity（GeoJSON 属性）：读 entity.properties PropertyBag。
  * 选中构件高亮（feature.color），换选/关闭时还原。 */
 
 const featPanel = $('#featPanel'); const featBody = $('#featBody');
@@ -351,6 +353,12 @@ const FEAT_HL = Cesium.Color.fromCssColorString('#ffd54d').withAlpha(0.5);
 
 const isTileFeature = (p) => Boolean(p) && p.content
   && typeof p.getPropertyIds === 'function' && typeof p.getProperty === 'function';
+
+/** ModelFeature（glb 模型要素）：方法集与 tile 要素一致但没有 .content，
+ *  以前被三个分支全部漏掉 → 点击模型构件属性面板永远不展示。 */
+const isModelFeature = (p) => !isTileFeature(p) && Boolean(p)
+  && typeof p.getPropertyIds === 'function' && typeof p.getProperty === 'function'
+  && typeof p.hasProperty === 'function';
 
 function clearFeatureHighlight() {
   if (!pickedFeature) return;
@@ -377,7 +385,8 @@ const fmtVal = (v) => {
 
 function propsOfPicked(p) {
   if (!p) return null;
-  if (isTileFeature(p)) {                               // Cesium ≤1.11x Cesium3DTileFeature
+  const tileFeature = isTileFeature(p);
+  if (tileFeature || isModelFeature(p)) {                // Cesium3DTileFeature / ModelFeature
     let ids = [];
     try { ids = p.getPropertyIds() || []; } catch { /* 无批次表 */ }
     const props = [];
@@ -387,7 +396,8 @@ function propsOfPicked(p) {
       props.push([id, v]);
     }
     let cls; try { cls = typeof p.getExactClassName === 'function' ? p.getExactClassName() : undefined; } catch {}
-    return { props, cls, batchId: p.batchId, kind: '3dtiles' };
+    // 1.111 的要素编号叫 featureId（batchId 字段不存在），两者都兜住
+    return { props, cls, batchId: p.batchId ?? p.featureId, kind: tileFeature ? '3dtiles' : 'model' };
   }
   const bag = p.properties;                             // Cesium ≥1.115 PropertyBag 形态
   if (p.content && bag && typeof bag.get === 'function' && typeof bag.keys === 'function') {
@@ -425,7 +435,8 @@ function plainValue(v) {
 function renderFeature(info) {
   const { props, cls, batchId, kind } = info;
   featTitle.textContent = cls || `构件 #${batchId ?? '—'}`;
-  featTag.textContent = kind === '3dtiles' ? `3D Tiles · batchId ${batchId ?? '—'}` : '矢量实体属性';
+  featTag.textContent = kind === '3dtiles' ? `3D Tiles · batchId ${batchId ?? '—'}`
+    : kind === 'model' ? `模型要素 · featureId ${batchId ?? '—'}` : '矢量实体属性';
   featBody.innerHTML = '';
   if (props.length) {
     const tb = el('tbody');
@@ -456,7 +467,9 @@ pickHandler.setInputAction((movement) => {
   const info = propsOfPicked(picked);
   if (!info) { closeFeaturePanel(); return; }
   clearFeatureHighlight();
-  if (isTileFeature(picked)) { picked.color = FEAT_HL; pickedFeature = picked; }
+  if (isTileFeature(picked) || isModelFeature(picked)) {   // 两类要素都带 color setter
+    try { picked.color = FEAT_HL; pickedFeature = picked; } catch { /* 图层不可高亮 */ }
+  }
   renderFeature(info);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
