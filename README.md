@@ -20,7 +20,7 @@ CesiumJS 原生流式数据 —— 浏览器上传、在线三维预览，REST A
 
 ## 📖 它是什么
 
-MGOServer 是 [MGO](https://github.com/Johnly1986/MGO)（C++17 三维切片引擎）的 Node.js HTTP 服务封装：
+MGOServer 是 MGO（C++17 三维切片引擎）的 Node.js HTTP 服务封装；引擎二进制由公开门面仓 [MGO-CLI](https://github.com/Johnly1986/MGO-CLI) 发布：
 
 | 输入 | 输出 |
 |------|------|
@@ -74,7 +74,7 @@ curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' -F file=@tower.fbx
 | 离线内网 | `MGO_ENGINE_BUNDLE=/path/to/mgo-engine-<plat>.tgz npm ci`（包由构建机 `npm run engine:pack` 产出，自包含 proj.db） |
 | 镜像加速 | `MGO_ENGINE_MIRROR=https://your-proxy/{url}`，或直接改 `package.json` 的 `mgoEngine.downloads` |
 | 自管引擎 | 设 `MGO_BINARY` 指向已有可执行文件，安装器不干预 |
-| 传统路线 | 将 [MGO Releases](https://github.com/Johnly1986/MGO/releases) 产物放入 `build/bin/{linux,windows}/`；Ubuntu 24.04 需 `sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data` |
+| 传统路线 | 将 [MGO-CLI Releases](https://github.com/Johnly1986/MGO-CLI/releases) 产物放入 `build/bin/{linux,windows}/`；Ubuntu 24.04 需 `sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data` |
 
 全部环境变量见 [`.env.example`](.env.example)；升级引擎用 `npm run engine:update`。
 

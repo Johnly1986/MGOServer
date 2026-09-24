@@ -28,7 +28,7 @@ suite, [yazl](https://github.com/thejoshwolfe/yazl) (MIT) to build the test arch
 ## The MGO binary
 
 The conversion work happens in `MGOConsole`, built from
-[MGO](https://github.com/Johnly1986/MGO) (Apache-2.0), which in turn links Assimp,
+MGO (Apache-2.0; binaries published via [MGO-CLI](https://github.com/Johnly1986/MGO-CLI)), which in turn links Assimp,
 meshoptimizer, PROJ, Eigen, GDAL/libtiff, libjpeg/libpng and optionally
 OpenSceneGraph — see that repository's `THIRD_PARTY_NOTICES.md` for their licenses.
 This service only shells out to that executable and parses its documented
