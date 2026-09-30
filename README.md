@@ -43,10 +43,15 @@ MGOServer 是 MGO（C++17 三维切片引擎）的 Node.js HTTP 服务封装；�
 
 ```bash
 git clone https://github.com/Johnly1986/MGOServer.git && cd MGOServer
-npm ci              # postinstall 自动下载引擎包（Linux ~98MB / Windows ~17MB），幂等可重复
-npm run doctor      # 可选：一键体检引擎 / 动态库闭包 / proj.db / glibc 基线
+npm ci              # postinstall 自动下载引擎包（Linux ~98MB / Windows ~27MB），幂等可重复
+npm run doctor      # 可选：一键体检引擎 / 动态库闭包 / proj.db / glibc 基线 / 上游是否有新引擎
 npm start           # 监听 0.0.0.0:8080
 ```
+
+> `npm ci` 装的是 `package.json` 里**固定版本 + sha256** 的引擎（可复现、可离线、装机结果可预期）。
+> 想直接拿 MGO-CLI 最新 Release：`npm run engine:update -- --latest`——它会查一次 GitHub API，
+> 取对应平台资产并用该资产自带的 sha256 digest 校验；查询失败（离线 / API 限流 / 该平台无资产）
+> 会告警并自动回退到固定版本，不会让安装失败。
 
 打开 **<http://127.0.0.1:8080/console.html>** 即可上传切片、三维预览。
 
@@ -72,11 +77,12 @@ curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' -F file=@tower.fbx
 | 场景 | 做法 |
 |------|------|
 | 离线内网 | `MGO_ENGINE_BUNDLE=/path/to/mgo-engine-<plat>.tgz npm ci`（包由构建机 `npm run engine:pack` 产出，自包含 proj.db） |
+| 升级到最新 | `npm run engine:update -- --latest`：取 [MGO-CLI 最新 Release](https://github.com/Johnly1986/MGO-CLI/releases/latest) 的对应平台资产，用 release asset 自带 digest 校验；查询失败自动回退到固定版本。GitHub API 未认证限额 60 次/小时/IP，提额用 `GITHUB_TOKEN=xxx npm run engine:update -- --latest` |
 | 镜像加速 | `MGO_ENGINE_MIRROR=https://your-proxy/{url}`，或直接改 `package.json` 的 `mgoEngine.downloads` |
 | 自管引擎 | 设 `MGO_BINARY` 指向已有可执行文件，安装器不干预 |
 | 传统路线 | 将 [MGO-CLI Releases](https://github.com/Johnly1986/MGO-CLI/releases) 产物放入 `build/bin/{linux,windows}/`；Ubuntu 24.04 需 `sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data` |
 
-全部环境变量见 [`.env.example`](.env.example)；升级引擎用 `npm run engine:update`。
+全部环境变量见 [`.env.example`](.env.example)（安装器读的是进程环境变量，`.env` 只影响服务进程）；升级引擎用 `npm run engine:update`，或加 `-- --latest` 追新。
 
 </details>
 

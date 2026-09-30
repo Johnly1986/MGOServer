@@ -21,6 +21,17 @@
  *      (process.platform is normalized first: win32 hosts resolve the "win-*"
  *      keys, matching the release asset names; legacy "win32-*" keys still hit)
  *
+ * `--latest` (opt-in, used as `npm run engine:update -- --latest`) replaces
+ * step 5 with the newest release of the public facade repo (MGO-CLI): one
+ * GitHub API call, then the asset built for this platform, with the sha256
+ * taken from the asset's own digest — so "always newest" still verifies
+ * integrity without a pin.  A failed lookup (offline, 403 rate limit, no
+ * asset for this platform) never breaks the install: it warns and falls back
+ * to the pinned step-5 entry.  This is deliberately NOT the default — `npm ci`
+ * must stay reproducible and work air-gapped.  Related env overrides:
+ * GITHUB_TOKEN (raise the 60/h unauthenticated API budget), MGO_ENGINE_API
+ * (API base, e.g. GitHub Enterprise), MGO_ENGINE_LATEST_TIMEOUT_MS.
+ *
  * Bundle layout (produced by scripts/pack-engine.mjs, flat at archive root):
  *   MGOConsole[.exe] + side-car libs + share/proj (proj.db) + share/gdal
  *   + manifest.json {version, platform, arch, glibc, files{sha256}}
@@ -122,6 +133,69 @@ export function candidateUrls(entry, { urlEnv, mirrorEnv } = {}) {
   return mirrorEnv ? [...list, ...list.map((u) => applyMirror(mirrorEnv, u))] : list;
 }
 
+// ── latest-release resolution (opt-in `--latest`) ────────────────────────────
+// `npm run engine:update -- --latest` asks the public facade repo (MGO-CLI) for
+// its newest release instead of trusting the pinned package.json entry.  The
+// pin stays the default so `npm ci` remains reproducible; this path degrades to
+// the pin on any lookup failure (offline, 403 rate limit, missing asset).
+export const GH_API_BASE = 'https://api.github.com';
+export const GH_REPO = 'Johnly1986/MGO-CLI';
+
+/** GitHub asset digest ("sha256:<hex>") or a bare hex hash → lowercase hex, else null. */
+export function normalizeDigest(digest) {
+  const s = String(digest ?? '').trim();
+  const m = /^(?:sha256:)?([0-9a-f]{64})$/i.exec(s);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** Newest release asset for a platform key ("win-x64" → MGO-<ver>-win-x64.zip).
+ *  Returns null when the release carries nothing for this platform/arch. */
+export function pickReleaseAsset(release, key) {
+  const k = /^([a-z0-9]+)-([a-z0-9_]+)$/i.exec(String(key ?? ''));
+  if (!k) return null;
+  const re = new RegExp(`^MGO-(.+?)-${k[1]}-${k[2]}\\.(?:tar\\.gz|tgz|zip)$`, 'i');
+  for (const a of release?.assets ?? []) {
+    const m = re.exec(String(a?.name ?? ''));
+    if (!m || !a?.browser_download_url) continue;
+    return {
+      name: a.name,
+      version: m[1].replace(/^v/i, ''),
+      url: a.browser_download_url,
+      sha256: normalizeDigest(a.digest), // null on hosts that do not report digests yet
+    };
+  }
+  return null;
+}
+
+/** `GET /repos/<repo>/releases/latest` → the platform asset, never throws.
+ *  Returns {ok:true, tag, version, name, url, sha256} | {ok:false, error}. */
+export async function fetchLatestAsset(repo, key, { apiBase = GH_API_BASE, token, timeoutMs = 30000 } = {}) {
+  try {
+    const res = await fetch(`${String(apiBase).replace(/\/+$/, '')}/repos/${repo}/releases/latest`, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': 'mgoserver-engine-installer',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) {
+      // 403/429 here is almost always the 60/h unauthenticated per-IP budget
+      const left = res.headers.get('x-ratelimit-remaining');
+      const hint = res.status === 403 || res.status === 429 || left === '0'
+        ? ' — GitHub API rate limit, set GITHUB_TOKEN to raise it to 5000/h' : '';
+      return { ok: false, error: `HTTP ${res.status} ${res.statusText}${hint}` };
+    }
+    const release = await res.json();
+    const asset = pickReleaseAsset(release, key);
+    if (!asset) return { ok: false, error: `release ${release?.tag_name ?? '?'} has no asset matching ${key}` };
+    return { ok: true, tag: release.tag_name ?? null, ...asset };
+  } catch (e) {
+    return { ok: false, error: e?.name === 'TimeoutError' ? `timed out after ${timeoutMs}ms` : (e?.message ?? String(e)) };
+  }
+}
+
 // ── download ─────────────────────────────────────────────────────────────────
 async function downloadTo(url, destFile, timeoutMs) {
   const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(timeoutMs) });
@@ -199,12 +273,17 @@ async function report(binary, dest) {
   // construction: same helper, both layouts (share/… bundle, vcpkg-flat release)
   const envAdd = engineEnv(binary);
   const manifestPath = path.join(dest, 'manifest.json');
-  let bundleVersion = '(no manifest)';
-  try { bundleVersion = JSON.parse(await fsp.readFile(manifestPath, 'utf8')).version ?? bundleVersion; } catch { /* ok */ }
+  let bundleVersion = null;
+  try { bundleVersion = JSON.parse(await fsp.readFile(manifestPath, 'utf8')).version ?? null; } catch { /* no manifest in bundle */ }
   say('  engine      ', info.found
     ? `${binary} → MGO ${info.version}  osgb=${info.hasOsgb ? '✓' : '✗'} bim=${info.hasBim ? '✓' : '✗'}`
     : `${binary} → probe FAILED (see doctor)`);
-  say('  bundle      ', `version ${bundleVersion}`);
+  // the shipped MGO-CLI bundles carry a wrapping directory but no manifest.json
+  // (pack-engine.mjs writes one for hand-packed bundles) — degrade to what the
+  // binary itself reports instead of printing a misleading "(no manifest)"
+  say('  bundle      ', bundleVersion
+    ? `version ${bundleVersion}`
+    : `no manifest.json in bundle — binary self-reports ${info.version ?? 'unknown'}`);
   say('  proj data   ', envAdd.PROJ_DATA ? `${envAdd.PROJ_DATA} ✓ (PROJ_DATA injected)` : 'not bundled (system proj-data expected)');
   say('  gdal data   ', envAdd.GDAL_DATA ? `${envAdd.GDAL_DATA} ✓ (GDAL_DATA injected)` : 'not bundled (system gdal-data expected)');
   return info;
@@ -213,6 +292,7 @@ async function report(binary, dest) {
 // ── main ─────────────────────────────────────────────────────────────────────
 export async function setup(argv = process.argv.slice(2), env = process.env, pkgRoot = PKG_ROOT) {
   const force = argv.includes('--force');
+  const wantLatest = argv.includes('--latest');
   const destIdx = argv.indexOf('--dest');
   if (destIdx >= 0 && !argv[destIdx + 1]) {
     warn('--dest needs a directory argument');
@@ -224,8 +304,9 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
   const manifest = loadEngineManifest(pkgRoot);
   // the release tag and the version string the binary prints CAN diverge
   // (they did before upstream v0.8.0 synced them) — compare against what
-  // the binary is EXPECTED to report, not the tag
-  const expectReports = manifest?.reportsVersion ?? manifest?.version ?? null;
+  // the binary is EXPECTED to report, not the tag.  `--latest` re-points this
+  // at the version we are actually about to install.
+  let expectReports = manifest?.reportsVersion ?? manifest?.version ?? null;
   const binary = path.join(dest, binaryName);
 
   say('== mgo engine setup ==');
@@ -234,7 +315,7 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
   if (env.MGO_ENGINE_SKIP === '1') { say('  skipped     MGO_ENGINE_SKIP=1'); return { skipped: 'env' }; }
   if (env.MGO_BINARY) { say('  skipped     MGO_BINARY is set (self-managed engine):', env.MGO_BINARY); return { skipped: 'MGO_BINARY' }; }
   if (!force && fs.existsSync(binary)) {
-    say('  skipped     engine already present (', binary, ') — npm run engine:update to refresh');
+    say('  skipped     engine already present (', binary, ') — npm run engine:update to refresh (add `-- --latest` for the newest release)');
     await report(binary, dest);
     return { skipped: 'present' };
   }
@@ -261,7 +342,8 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
   let sourceDesc = null;
   let downloadedFrom = null;
   let tmpDir = null;
-  const entry = resolveDownloadEntry(manifest, platformKey);
+  const pinnedEntry = resolveDownloadEntry(manifest, platformKey);
+  let entry = pinnedEntry;
   if (env.MGO_ENGINE_BUNDLE) {
     bundleFile = path.resolve(env.MGO_ENGINE_BUNDLE);
     if (!fs.existsSync(bundleFile)) {
@@ -269,6 +351,30 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
     }
     sourceDesc = `offline bundle ${bundleFile}`;
   } else {
+    // `--latest`: newest MGO-CLI release instead of the pinned entry.  An
+    // explicit MGO_ENGINE_URL still wins (the operator was more specific), and
+    // any lookup failure falls back to the pin rather than failing the install.
+    if (wantLatest && env.MGO_ENGINE_URL) {
+      say('  latest      MGO_ENGINE_URL is set — using it instead of the release feed');
+    } else if (wantLatest) {
+      const repo = manifest?.releaseRepo || GH_REPO;
+      say(`  checking    latest MGO-CLI release (${repo})`);
+      const latest = await fetchLatestAsset(repo, platformKey, {
+        apiBase: env.MGO_ENGINE_API || GH_API_BASE,
+        token: env.GITHUB_TOKEN || env.GH_TOKEN,
+        timeoutMs: Number(env.MGO_ENGINE_LATEST_TIMEOUT_MS || 30000),
+      });
+      if (latest.ok) {
+        // mirrors from the pin stay usable for the newest asset too
+        entry = { url: latest.url, mirrors: pinnedEntry?.mirrors ?? [], sha256: latest.sha256 ?? undefined };
+        expectReports = latest.version;
+        say(`  latest      ${latest.tag ?? latest.version} → ${latest.name}`
+          + (latest.sha256 ? ' (sha256 from release asset digest)' : ' (no digest published — sidecar only)'));
+      } else {
+        warn(`latest-release lookup failed: ${latest.error}`);
+        warn(`falling back to the pinned engine ${manifest?.version ?? '(none)'} from package.json`);
+      }
+    }
     if (!entry) {
       const known = Object.keys(manifest?.downloads ?? {});
       warn(`no pre-configured engine download for ${platformKey} (package.json mgoEngine.downloads${known.length ? ` has: ${known.join(', ')}` : ' is empty'}).`);

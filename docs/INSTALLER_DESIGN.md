@@ -98,7 +98,8 @@ export function engineEnv(binaryDir) {
 2. `build/bin/<plat>/` 已有引擎且 `manifest.json` 版本 ≥ 期望 → 跳过（**现状 clone 即用路径，老用户零感知**）；
 3. `MGO_ENGINE_BUNDLE=/path/to.tgz` → 离线安装（内网/无外网）；
 4. `MGO_ENGINE_MIRROR` 镜像 URL（国内兜底）；
-5. GitHub Release：`https://github.com/Johnly1986/MGOServer/releases/download/engine-v<mgoEngine.version>/mgo-engine-<plat>-<arch>.tgz`。
+5. GitHub Release：`https://github.com/Johnly1986/MGO-CLI/releases/download/v<mgoEngine.version>/MGO-<version>-<plat>-<arch>.{tar.gz,zip}`（url/sha256 由 `package.json mgoEngine.downloads` 固定）；
+6. **可选追新** `npm run engine:update -- --latest`：先查 `GET /repos/<mgoEngine.releaseRepo>/releases/latest`，命中本平台资产就用它的 URL + asset digest 的 sha256 **取代**第 5 步（因此不牺牲完整性校验）；查询失败（离线 / 403 限流 / 该平台无资产）只告警并回退第 5 步。`npm ci` / postinstall 不带该开关，装机结果始终由固定版本决定。
 
 下载后：sha256 校验 → 解压到 `build/bin/<plat>/` → `probeMgo()` 实测 → 打印结果表（引擎版本 / hasOsgb / hasBim / proj.db 就位 / 缺失项）。
 **绝不 sudo、绝不改系统**；失败时输出 doctor 的提示文案并返回非零（postinstall 失败会让 `npm ci` 红掉，问题前置暴露）。

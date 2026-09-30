@@ -15,7 +15,7 @@ import { promisify } from 'node:util';
 import { loadConfig, PKG_ROOT, PLATFORM_BIN_DIR } from '../src/config.js';
 import { probeMgo } from '../src/mgo.js';
 import { engineEnv } from '../src/engine-env.js';
-import { loadEngineManifest, resolveDownloadEntry, platformKey, binaryName, compareVersions } from './setup.mjs';
+import { loadEngineManifest, resolveDownloadEntry, platformKey, binaryName, compareVersions, fetchLatestAsset, GH_REPO } from './setup.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -62,6 +62,25 @@ async function main() {
     pass('engine probe', `MGO ${probed.version} (${caps})${age}`);
   } else if (exists) {
     fail('engine probe', `${binary} is present but cannot run — 'ldd ${binary}' usually names the missing library`);
+  }
+
+  // 2b ── upstream availability: one read-only release-feed call.  doctor must
+  // never hang or turn red on an air-gapped host, so a failed lookup is INFO
+  // and the call is short-timeout; "newer upstream exists" is a WARN (the pin
+  // is still a working engine — see docs/INSTALLER_DESIGN.md).
+  const upstream = await fetchLatestAsset(manifest?.releaseRepo || GH_REPO, platformKey, {
+    apiBase: process.env.MGO_ENGINE_API,
+    token: process.env.GITHUB_TOKEN || process.env.GH_TOKEN,
+    timeoutMs: Number(process.env.MGO_ENGINE_LATEST_TIMEOUT_MS || 8000),
+  });
+  if (!upstream.ok) {
+    info('upstream', `newest release not checked (${upstream.error})`);
+  } else if (probed?.version && compareVersions(probed.version, upstream.version) < 0) {
+    warnRow('upstream', `MGO ${upstream.version} available (${upstream.tag}) — you run ${probed.version}; npm run engine:update -- --latest`);
+  } else if (probed?.version) {
+    pass('upstream', `MGO ${probed.version} is the newest release (${upstream.tag})`);
+  } else {
+    info('upstream', `newest release is ${upstream.tag} (no local engine probed)`);
   }
 
   // 3 ── dynamic library closure (Linux only; the self-contained bundle ships

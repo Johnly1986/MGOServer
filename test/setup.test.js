@@ -8,7 +8,7 @@ import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { setup, compareVersions, applyMirror, candidateUrls, loadEngineManifest, resolveDownloadEntry, platformKey, platformKeyFor, sha256File, expectedSha256 } from '../scripts/setup.mjs';
+import { setup, compareVersions, applyMirror, candidateUrls, loadEngineManifest, resolveDownloadEntry, platformKey, platformKeyFor, sha256File, expectedSha256, normalizeDigest, pickReleaseAsset, fetchLatestAsset } from '../scripts/setup.mjs';
 import { parseLdd } from '../scripts/pack-engine.mjs';
 import { runJob } from '../src/jobs/runner.js';
 import { engineEnv, withEngineEnv } from '../src/engine-env.js';
@@ -485,4 +485,199 @@ t('doctor: runs to a structured verdict without crashing (child-process smoke)',
   }).catch((e) => ({ stdout: e.stdout ?? '' }));
   assert.match(stdout, /== mgo doctor ==/);
   assert.match(stdout, /== \d+ pass \/ \d+ fail \/ \d+ warn ==/);
+});
+
+// ── `--latest`: opt-in newest MGO-CLI release (npm ci stays pinned) ──────────
+test('normalizeDigest: GitHub "sha256:<hex>" and bare hex normalize, junk → null', () => {
+  const h = 'a'.repeat(64);
+  assert.equal(normalizeDigest(`sha256:${h}`), h);
+  assert.equal(normalizeDigest(h.toUpperCase()), h);
+  assert.equal(normalizeDigest('sha256:nothex'), null);
+  assert.equal(normalizeDigest('sha1:zz'), null);
+  assert.equal(normalizeDigest(''), null);
+  assert.equal(normalizeDigest(undefined), null);
+});
+
+test('pickReleaseAsset: platform asset wins over licences/other platforms, version + digest carried', () => {
+  const release = {
+    tag_name: 'v9.9.9-latest',
+    assets: [
+      { name: 'THIRD_PARTY_LICENSES.txt', browser_download_url: 'https://x/lic' },
+      { name: 'MGO-9.9.9-latest-win-x64.zip', browser_download_url: 'https://x/win.zip', digest: `sha256:${'b'.repeat(64)}` },
+      { name: `MGO-9.9.9-latest-${platformKey}.tar.gz`, browser_download_url: 'https://x/lin.tgz', digest: `sha256:${'c'.repeat(64)}` },
+    ],
+  };
+  assert.deepEqual(pickReleaseAsset(release, platformKey), {
+    name: `MGO-9.9.9-latest-${platformKey}.tar.gz`,
+    version: '9.9.9-latest',
+    url: 'https://x/lin.tgz',
+    sha256: 'c'.repeat(64),
+  });
+  assert.equal(pickReleaseAsset(release, 'win-x64')?.url, 'https://x/win.zip');
+  assert.equal(pickReleaseAsset(release, 'darwin-arm64'), null, 'no asset for this platform → null, not a wrong-platform pick');
+  assert.equal(pickReleaseAsset({ assets: [] }, 'linux-x64'), null);
+  assert.equal(pickReleaseAsset(null, 'linux-x64'), null);
+  assert.equal(pickReleaseAsset(release, 'linux'), null, 'a key without arch cannot match');
+  // a release predating asset digests still resolves — integrity then warns
+  const noDigest = pickReleaseAsset({ assets: [{ name: 'MGO-1.2.3-linux-x64.tgz', browser_download_url: 'u' }] }, 'linux-x64');
+  assert.equal(noDigest?.sha256, null);
+  assert.equal(noDigest?.version, '1.2.3');
+});
+
+test('fetchLatestAsset: 403 rate limit, missing asset and timeouts come back as {ok:false}, never throw', async () => {
+  const srv = http.createServer((req, res) => {
+    if (req.url.startsWith('/rate/repos/')) {
+      res.writeHead(403, { 'x-ratelimit-remaining': '0' });
+      return res.end('{"message":"API rate limit exceeded"}');
+    }
+    if (req.url.startsWith('/empty/repos/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ tag_name: 'v1.0.0', assets: [{ name: 'THIRD_PARTY_LICENSES.txt' }] }));
+    }
+    res.writeHead(404); res.end('{}');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const rate = await fetchLatestAsset('o/r', 'linux-x64', { apiBase: `${base}/rate` });
+  assert.equal(rate.ok, false);
+  assert.match(rate.error, /rate limit/i);
+  const empty = await fetchLatestAsset('o/r', 'linux-x64', { apiBase: `${base}/empty` });
+  assert.equal(empty.ok, false);
+  assert.match(empty.error, /no asset matching linux-x64/);
+  const dead = await fetchLatestAsset('o/r', 'linux-x64', {
+    apiBase: `${base}/dead`, timeoutMs: 2000,
+  });
+  assert.equal(dead.ok, false);
+  await new Promise((r) => srv.close(r));
+});
+
+t('setup --latest: installs the newest release, verifies the asset digest, and npm ci never asks the feed', async () => {
+  const engineDir = path.join(root, 'fakeeng-latest');
+  await makeFakeEngine(engineDir, '9.9.9-latest');
+  const bundle = await tarBundle(engineDir, path.join(root, 'srv-latest', `MGO-9.9.9-latest-${platformKey}.tar.gz`));
+  const hash = await sha256File(bundle);
+
+  const hits = { api: 0, asset: 0, pinned: 0 };
+  let base = '';
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/repos/Johnly1986/MGO-CLI/releases/latest') {
+      hits.api += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({
+        tag_name: 'v9.9.9-latest',
+        assets: [{
+          name: `MGO-9.9.9-latest-${platformKey}.tar.gz`,
+          browser_download_url: `${base}/asset.tar.gz`,
+          digest: `sha256:${hash}`,
+        }],
+      }));
+    }
+    if (req.url === '/asset.tar.gz') { hits.asset += 1; res.writeHead(200); return fs.createReadStream(bundle).pipe(res); }
+    if (req.url === '/pinned.tgz') { hits.pinned += 1; res.writeHead(200); return fs.createReadStream(bundle).pipe(res); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  base = `http://127.0.0.1:${srv.address().port}`;
+
+  const pkg = path.join(root, 'pkg-latest');
+  await fsp.mkdir(pkg, { recursive: true });
+  await fsp.writeFile(path.join(pkg, 'package.json'), JSON.stringify({
+    mgoEngine: {
+      version: '0.0.1-pinned',
+      reportsVersion: '0.0.1-pinned',
+      releaseRepo: 'Johnly1986/MGO-CLI',
+      downloads: { [platformKey]: { url: `${base}/pinned.tgz`, sha256: hash } },
+    },
+  }));
+
+  try {
+    const res = await setup(['--dest', path.join(root, 'bin-latest'), '--force', '--latest'],
+      { MGO_ENGINE_API: base }, pkg);
+    assert.equal(res.installed, true);
+    assert.equal(res.version, '9.9.9-latest');
+    assert.deepEqual(hits, { api: 1, asset: 1, pinned: 0 }, 'the newest asset must be used, not the pin');
+
+    // the npm-ci path (no --latest) must stay pinned and offline-friendly
+    hits.api = 0; hits.asset = 0; hits.pinned = 0;
+    const plain = await setup(['--dest', path.join(root, 'bin-pinned')], { MGO_ENGINE_API: base }, pkg);
+    assert.equal(plain.installed, true);
+    assert.equal(hits.api, 0, 'a plain install (npm postinstall) must never query the release feed');
+    assert.deepEqual([hits.asset, hits.pinned], [0, 1]);
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
+});
+
+t('setup --latest: a failing feed warns and falls back to the pinned entry instead of breaking the install', async () => {
+  const engineDir = path.join(root, 'fakeeng-latfail');
+  await makeFakeEngine(engineDir, '9.9.9-pin');
+  const bundle = await tarBundle(engineDir, path.join(root, 'srv-latfail', 'pin.tgz'));
+  const hash = await sha256File(bundle);
+  const hits = { api: 0, pinned: 0 };
+  const srv = http.createServer((req, res) => {
+    if (req.url.startsWith('/repos/')) { hits.api += 1; res.writeHead(500); return res.end('boom'); }
+    if (req.url === '/pin.tgz') { hits.pinned += 1; res.writeHead(200); return fs.createReadStream(bundle).pipe(res); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const pkg = path.join(root, 'pkg-latfail');
+  await fsp.mkdir(pkg, { recursive: true });
+  await fsp.writeFile(path.join(pkg, 'package.json'), JSON.stringify({
+    mgoEngine: {
+      version: '9.9.9-pin',
+      downloads: { [platformKey]: { url: `${base}/pin.tgz`, sha256: hash } },
+    },
+  }));
+
+  const errs = [];
+  const orig = console.error;
+  console.error = (...a) => errs.push(a.join(' '));
+  try {
+    const res = await setup(['--dest', path.join(root, 'bin-latfail'), '--force', '--latest'],
+      { MGO_ENGINE_API: base }, pkg);
+    assert.equal(res.installed, true, 'fallback must still produce a working engine');
+    assert.deepEqual([hits.api, hits.pinned], [1, 1]);
+    assert.match(errs.join('\n'), /falling back to the pinned engine/);
+  } finally {
+    console.error = orig;
+    await new Promise((r) => srv.close(r));
+  }
+});
+
+t('setup --latest: a tampered newest asset (digest mismatch) fails closed', async () => {
+  const engineDir = path.join(root, 'fakeeng-latbad');
+  await makeFakeEngine(engineDir, '9.9.9-bad');
+  const bundle = await tarBundle(engineDir, path.join(root, 'srv-latbad', 'bad.tar.gz'));
+  const srv = http.createServer((req, res) => {
+    if (req.url.startsWith('/repos/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({
+        tag_name: 'v9.9.9-bad',
+        assets: [{
+          name: `MGO-9.9.9-bad-${platformKey}.tar.gz`,
+          browser_download_url: `http://127.0.0.1:${srv.address().port}/bad.tar.gz`,
+          digest: `sha256:${'0'.repeat(64)}`,
+        }],
+      }));
+    }
+    if (req.url === '/bad.tar.gz') { res.writeHead(200); return fs.createReadStream(bundle).pipe(res); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const pkg = path.join(root, 'pkg-latbad');
+  await fsp.mkdir(pkg, { recursive: true });
+  await fsp.writeFile(path.join(pkg, 'package.json'), JSON.stringify({ mgoEngine: { version: '9.9.9-bad', downloads: {} } }));
+  const dest = path.join(root, 'bin-latbad');
+  const prev = process.exitCode;
+  try {
+    const res = await setup(['--dest', dest, '--force', '--latest'], { MGO_ENGINE_API: base }, pkg);
+    assert.equal(process.exitCode, 1, 'digest mismatch must fail the install');
+    assert.equal(res.installed, undefined);
+    assert.equal(fs.existsSync(path.join(dest, 'MGOConsole')), false, 'mismatched newest bundle must not land');
+  } finally {
+    process.exitCode = prev;
+    await new Promise((r) => srv.close(r));
+  }
 });
