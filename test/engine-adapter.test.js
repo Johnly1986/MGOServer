@@ -58,6 +58,15 @@ test('bim: metadata flag forwards; strategy/idProperty unchanged', () => {
   assert.ok(jobSchema.safeParse({ type: 'tiles', bim: { metadata: true } }).success);
 });
 
+test('progress: GeoJSONConverter Done line parses (leftover from audit)', () => {
+  const p = new ProgressParser();
+  const d = p.parse('[GeoJSONConverter] Done: 1/1');
+  assert.ok(d, 'geojson Done line must parse');
+  assert.equal(d.type, 'done');
+  assert.equal(d.percent, 100);
+  assert.equal(d.done, 1);
+});
+
 test('progress: MeshGroupOptimizer lines are parsed (G6 regression)', () => {
   const p = new ProgressParser();
   assert.equal(p.parse('[MeshGroupOptimizer] Loading model: x'), null);

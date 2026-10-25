@@ -12,7 +12,7 @@
  * fail a job — the caller simply falls back to status-only progress.
  */
 
-const MODULES = 'TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|OSGBSimplify|ImageTiler|MeshGroupOptimizer';
+const MODULES = 'TerrainConverter|TilesConverter|OSGBConverter|OSGBReader|OSGBSimplify|ImageTiler|MeshGroupOptimizer|GeoJSONConverter';
 
 const RE_PROGRESS = new RegExp(`^\\[(${MODULES})\\]\\s*Progress:\\s*(\\d+)/(\\d+)\\s*$`);
 const RE_DONE_FRAC = new RegExp(`^\\[(${MODULES})\\]\\s*Done:\\s*(\\d+)/(\\d+)\\b`);
@@ -44,7 +44,8 @@ export class ProgressParser {
       const phase = module === 'ImageTiler' ? 'levels'
         : module === 'OSGBReader' ? 'read'
         : module === 'OSGBSimplify' ? 'simplify'
-        : module === 'MeshGroupOptimizer' ? 'mesh' : 'tiles';
+        : module === 'MeshGroupOptimizer' ? 'mesh'
+        : module === 'GeoJSONConverter' ? 'convert' : 'tiles';
       this.last = { done, total, percent, phase, module };
       return { type: 'progress', done, total, percent, phase, module, detail: line.trim() };
     }
