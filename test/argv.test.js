@@ -110,8 +110,11 @@ test('georef: --7p / --cps forwarded without explicit mode (self-typing flags)',
     { input: '/in/a.fbx', out: '/out' });
   assert.ok(a7p.includes('--7p') && a7p.includes('1,2,3,4,5,6,7'), 'sevenParameter must not be dropped');
   assert.ok(!a7p.includes('--georef'), 'no mode → no --georef flag');
-  const acps = buildArgs({ type: 'terrain', params: { georef: { controlPointsPath: '/data/cp.csv' } } },
-    { input: '/in/a.tif', out: '/out' });
+  // terrain supports NO georef (engine contract, audit 2026-10): use osgb for
+  // the cps-forwarding assertion — see engine-adapter.test.js for the
+  // terrain/osgb rejection regressions.
+  const acps = buildArgs({ type: 'osgb', params: { georef: { controlPointsPath: '/data/cp.csv' } } },
+    { input: '/in/data', out: '/out' });
   assert.ok(acps.includes('--cps') && acps.includes('/data/cp.csv'));
 });
 

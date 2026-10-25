@@ -26,11 +26,15 @@ export const georefSchema = z.object({
   controlPoints: z.string().min(4).optional(),      // inline CSV text (sx,sy,sz,tx,ty,tz)
   controlPointsPath: z.string().min(1).optional(),  // server-side CSV path
   fitOrder: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  autoCrs: z.boolean().optional(),
 }).strict();
-// --offset exists only on the mesh CLI; accepting it for tiles/terrain/osgb
-// validated params the engine would never see (silently dropped in argv).
-export const meshGeorefSchema = georefSchema.extend({ offset: vec3.optional() });
+// --offset AND --auto-crs exist only on the mesh CLI; accepting them for
+// tiles/osgb would validate params the engine rejects with a usage error
+// (audit 2026-10: `--auto-crs` leaked here and made tiles jobs exit 2).
+// terrain supports NO georeferencing at all (engine contract: reject).
+export const meshGeorefSchema = georefSchema.extend({
+  offset: vec3.optional(),
+  autoCrs: z.boolean().optional(),
+});
 
 export const simplifySchema = z.object({
   error: num.min(0).optional(),
@@ -60,6 +64,7 @@ export const bimSchema = z.object({
   report: z.boolean().optional(),                     // --bim-report out/<stem>/bim_report.json
   noSceneMeta: z.boolean().optional(),                // --bim-no-scene-meta
   noInherit: z.boolean().optional(),                  // --bim-no-inherit
+  metadata: z.boolean().optional(),                   // --bim-metadata
 }).strict().refine(
   (v) => Object.values(v).some((x) => x !== undefined && x !== false),
   { message: 'bim requires at least one active option (bind/props/…)' },
@@ -73,6 +78,8 @@ export const tilesSchema = z.object({
   origin: vec3.optional(),
   minBlockDistance: num.gt(0).optional(),
   maxLod: z.number().int().positive().optional(),
+  compressMeshopt: z.boolean().optional(),            // --compress-meshopt
+  mergeSmallTiles: z.boolean().optional(),            // --merge-small-tiles
   proj: projSchema.optional(),
   georef: georefSchema.optional(),
   simplify: simplifySchema.optional(),
@@ -88,14 +95,21 @@ export const terrainSchema = z.object({
   normals: z.boolean().optional(),                  // false → --no-normals
   origin: vec3.optional(),
   proj: projSchema.optional(),
-  georef: georefSchema.optional(),
+  // NO georef: the terrain pipeline deliberately rejects --7p/--cps/--georef
+  // (audit 2026-10: forwarding them made every such job fail with exit 2).
   simplify: simplifySchema.optional(),
 }).strict();
 
+const zoomLevel = z.number().int().min(0).max(24);
+const rgb255 = z.number().int().min(0).max(255);
 export const imageSchema = z.object({
   type: z.literal('image'),
   proj: projSchema.optional(),
-}).strict();
+  origin: vec3.optional(),                       // --origin (TIF tiepoint override)
+  minZoom: zoomLevel.optional(),                  // --min-zoom
+  maxZoom: zoomLevel.optional(),                  // --max-zoom
+  nodata: z.array(rgb255).length(3).optional(),   // --nodata r,g,b
+}).strict();  // minZoom<=maxZoom is enforced by the engine (`--min-zoom must be <= --max-zoom`)
 
 export const geojsonSchema = z.object({
   type: z.literal('geojson'),

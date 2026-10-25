@@ -38,8 +38,7 @@ function addGeoref(a, g, { cpsFile, modeFlag = '--georef' } = {}) {
   const cps = cpsFile ?? g.controlPointsPath;
   if (cps) a.push('--cps', cps);
   if (g.fitOrder) a.push('--fit-order', j(g.fitOrder));
-  if (g.autoCrs) a.push('--auto-crs');
-  // note: --offset is mesh-only and handled in the mesh branch
+  // autoCrs is mesh-only (see meshGeorefSchema); --offset likewise
 }
 
 function addSimplify(a, s, { mesh = false } = {}) {
@@ -80,6 +79,7 @@ function addBim(a, bim, io) {
   if (bim.report === true) a.push('--bim-report', path.join(io.out, 'bim_report.json'));
   if (bim.noSceneMeta === true) a.push('--bim-no-scene-meta');
   if (bim.noInherit === true) a.push('--bim-no-inherit');
+  if (bim.metadata === true) a.push('--bim-metadata');
 }
 
 /**
@@ -98,6 +98,8 @@ export function buildArgs(job, io) {
       if (p.refine) a.push('-r', p.refine);
       if (p.minBlockDistance !== undefined) a.push('--min-block', j(p.minBlockDistance));
       if (p.maxLod !== undefined) a.push('--max-lod', j(p.maxLod));
+      if (p.compressMeshopt === true) a.push('--compress-meshopt');
+      if (p.mergeSmallTiles === true) a.push('--merge-small-tiles');
       addProj(a, p.proj, "--prj", io.prjFile);
       addOrigin(a, p.origin);
       addGeoref(a, p.georef, { cpsFile: io.cpsFile });
@@ -111,13 +113,17 @@ export function buildArgs(job, io) {
       if (p.normals === false) a.push('--no-normals');
       addProj(a, p.proj, "--prj", io.prjFile);
       addOrigin(a, p.origin);
-      addGeoref(a, p.georef, { cpsFile: io.cpsFile });
+      // terrain deliberately receives NO georef flags (engine rejects them)
       addSimplify(a, p.simplify);
       a.push('-v'); // module diagnostics are cheap and useful in run.log
       break;
 
     case 'image':
       addProj(a, p.proj, "--prj", io.prjFile);
+      addOrigin(a, p.origin);
+      if (p.minZoom !== undefined) a.push('--min-zoom', j(p.minZoom));
+      if (p.maxZoom !== undefined) a.push('--max-zoom', j(p.maxZoom));
+      if (p.nodata) a.push('--nodata', j3(p.nodata));
       break;
 
     case 'geojson':

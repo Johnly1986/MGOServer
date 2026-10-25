@@ -7,7 +7,8 @@ import { withEngineEnv } from './engine-env.js';
  * (HAS_OSGB_CONVERTER) — see design F9.
  */
 export async function probeMgo(binary) {
-  const info = { path: binary, found: false, version: null, hasOsgb: false, hasBim: false };
+  const info = { path: binary, found: false, version: null, hasOsgb: false, hasBim: false,
+    hasMeshopt: false, hasValidate: false, hasMergeTiles: false, features: null };
   const run = (args) => new Promise((res) => {
     const timer = setTimeout(() => res({ err: new Error('probe timeout'), out: '' }), 8000);
     // withEngineEnv: a self-contained engine bundle (build/bin/<plat>/share/…)
@@ -24,6 +25,26 @@ export async function probeMgo(binary) {
     const m = /MGO v([\w.+-]+)/.exec(v.out);
     info.version = m ? m[1] : 'unknown';
   }
+  // Preferred contract: `mgo --version --json` reports machine-readable
+  // version / osgb / features.  Text scraping below stays as the fallback for
+  // pre-JSON engines.  (audit gap G7)
+  const v2 = await run(['--version', '--json']);
+  if (!v2.err && v2.out) {
+    try {
+      const line = v2.out.trim().split('\n').filter((l) => l.startsWith('{')).pop();
+      const doc = line ? JSON.parse(line) : null;
+      if (doc && typeof doc.version === 'string') {
+        info.found = true;
+        info.version = doc.version;
+        if (typeof doc.osgb === 'boolean') info.hasOsgb = doc.osgb;
+        if (Array.isArray(doc.features)) {
+          info.features = doc.features;
+          info.hasMeshopt = doc.features.includes('meshopt-compression');
+          info.hasValidate = doc.features.includes('validate');
+        }
+      }
+    } catch { /* fall through to help-text probing */ }
+  }
   const h = await run(['help']);
   if (/\bosgb\b/.test(h.out || '')) info.hasOsgb = true;
   // TilesConverter property binding: only binaries from the --bim-* era list
@@ -31,5 +52,6 @@ export async function probeMgo(binary) {
   // so the console must not offer what the service cannot honour.
   const t = await run(['tiles', '--help']);
   if (/--bim-bind/.test(t.out || '')) info.hasBim = true;
+  if (/--merge-small-tiles/.test(t.out || '')) info.hasMergeTiles = true;
   return info;
 }

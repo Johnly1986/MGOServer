@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
+import { withEngineEnv } from '../engine-env.js';
 import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
@@ -189,7 +191,7 @@ export class JobManager extends EventEmitter {
       progress: { done: 0, total: 0, percent: 0, phase: null, source: 'none', message: null },
       createdAt: new Date().toISOString(),
       startedAt: null, finishedAt: null, exitCode: null,
-      error: null, artifacts: [], viewerUrl: null,
+      error: null, artifacts: [], viewerUrl: null, validation: null,
       events: [], _tail: [],
     };
     this.jobs.set(id, job);
@@ -498,6 +500,11 @@ export class JobManager extends EventEmitter {
         job.viewerUrl = prim?.viewer
           ? `/viewer.html?asset=${encodeURIComponent(prim.viewer.url)}&type=${prim.viewer.type}`
           : null;
+        // Post-success structural self-check (audit gap G8): purely
+        // informational — validate problems never change job status, and any
+        // failure of the probe itself degrades to validation = null.
+        try { job.validation = await this.validateOutput(job); }
+        catch { job.validation = null; }
         job.progress = { ...job.progress, percent: 100, source: 'cli-stdout' };
         this.setStatus(job, 'succeeded', { exitCode: 0 });
       }
@@ -571,6 +578,48 @@ export class JobManager extends EventEmitter {
     await fsp.rm(this.jobDir(id), { recursive: true, force: true });
     this.pump();
     return true;
+  }
+
+  /**
+   * Run `mgo validate --json` over the finished output (tiles/terrain/image/
+   * osgb directories, mesh single files).  Resolves null on ANY problem —
+   * the job result never depends on it.
+   */
+  async validateOutput(job) {
+    const VALIDATABLE = new Set(['tiles', 'terrain', 'image', 'osgb', 'mesh']);
+    if (!VALIDATABLE.has(job.type)) return null;
+    let target;
+    if (job.type === 'mesh') {
+      const a = primaryArtifact(job.artifacts);
+      target = a ? path.join(this.outDir(job.id), a.path.replace(/^\/+/, '')) : null;
+    } else {
+      target = this.outDir(job.id);
+    }
+    if (!target || !fs.existsSync(target)) return null;
+    return await new Promise((resolve) => {
+      let out = '';
+      let child;
+      try {
+        child = spawn(this.cfg.binary, ['validate', target, '--json'],
+          { env: withEngineEnv(this.cfg.binary), timeout: 180000 });
+      } catch { resolve(null); return; }
+      const done = (v) => { clearTimeout(guard); resolve(v); };
+      const guard = setTimeout(() => { try { child.kill(); } catch { /* gone */ } done(null); }, 190000);
+      child.stdout?.on('data', (d) => { out += d; if (out.length > 400000) done(null); });
+      child.stderr?.on('data', () => {});
+      child.on('error', () => done(null));
+      child.on('close', () => {
+        try {
+          const line = out.trim().split('\n').filter((l) => l.startsWith('{')).pop();
+          if (!line) return done(null);
+          const v = JSON.parse(line);
+          if (typeof v.ok !== 'boolean') return done(null);
+          done({ ok: v.ok, kind: v.kind ?? null, errors: v.errors ?? 0,
+            warnings: v.warnings ?? 0, tilesChecked: v.tilesChecked ?? 0,
+            contentFiles: v.contentFiles ?? 0 });
+        } catch { done(null); }
+      });
+    });
   }
 
   async logTail(id, n = 200) {
@@ -661,6 +710,7 @@ export function jobDto(job, { withParams = false } = {}) {
     error: job.error,
     artifacts: job.artifacts,
     viewerUrl: job.viewerUrl,
+    validation: job.validation ?? null,
     links: {
       self: `/api/v1/jobs/${job.id}`,
       events: `/api/v1/jobs/${job.id}/events`,

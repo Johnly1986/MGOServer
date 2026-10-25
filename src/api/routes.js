@@ -179,6 +179,9 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         fsBrowse: cfg.allowLocalPath || local,
         multiFileTiles: Boolean(cfg.tilesToolsCli),
         bimBinding: Boolean(mgo.hasBim),
+        meshCompression: Boolean(mgo.hasMeshopt),
+        mergeSmallTiles: Boolean(mgo.hasMergeTiles),
+        postValidation: Boolean(mgo.hasValidate),
         authMode: 'ip-whitelist',
       },
       client: {

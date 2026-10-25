@@ -52,15 +52,14 @@ export const gGeoref = ({ meshOffset = false } = {}) => {
   const g = el2('地理配准', [
     F('georef.mode', 'select', '配准方式', { opts: ['', '7param', 'multipos', 'anchor'], hint: '把源数据对齐到目标坐标系的方法；留空 = 按已填参数自动判定' }),
     F('georef.fitOrder', 'select', '拟合阶数', { opts: ['', '1', '2', '3'], hint: '控制点拟合多项式阶数：1=刚性/相似，2=二次，3=三次；点数少时用 1' }),
-    F('georef.autoCrs', 'bool', '自动识别源坐标系', { hint: '让 CLI 尝试从数据 / sidecar 文件识别源 CRS' }),
-    F('georef.sevenParameter', 'seven', '七参数', { span: true, hint: 'Helmert 七参数：3 平移 + 3 旋转 + 1 尺度，用于不同大地坐标系间的转换',
+      F('georef.sevenParameter', 'seven', '七参数', { span: true, hint: 'Helmert 七参数：3 平移 + 3 旋转 + 1 尺度，用于不同大地坐标系间的转换',
       subs: [['mx', null, '平移 (m)'], ['my', null, '平移 (m)'], ['mz', null, '平移 (m)'],
              ['rx', null, '旋转 (角秒)'], ['ry', null, '旋转 (角秒)'], ['rz', null, '旋转 (角秒)'],
              ['s', null, '尺度 (ppm)']] }),
     F('georef.controlPoints', 'area', '控制点 CSV 文本（源 → 目标）', { span: true, hint: '每行一条：源X,源Y,源Z,目标X,目标Y,目标Z（逗号或空格分隔），至少 3 条' }),
     F('@cps', 'file', '或上传控制点 .csv', { accept: '.csv,.txt', span: true, uploadOnly: true, hint: '内容与上方文本框相同，来自文件时优先生效' }),
   ]);
-  if (meshOffset) g.fields.push(F('georef.offset', 'vec3', '投影偏移', { subs: [['dE', null, '米'], ['dN', null, '米'], ['dH', null, '米']], hint: '配准完成后的整体平移量（米），用于微调成果位置' }));
+  if (meshOffset) g.fields.push(F('georef.autoCrs', 'bool', '自动识别源坐标系', { hint: '让 CLI 尝试从数据 / sidecar 文件识别源 CRS（仅模型简化管线支持）' }), F('georef.offset', 'vec3', '投影偏移', { subs: [['dE', null, '米'], ['dN', null, '米'], ['dH', null, '米']], hint: '配准完成后的整体平移量（米），用于微调成果位置' }));
   return g;
 };
 export const gSimplify = ({ local = false, errPh = '留空=不简化' } = {}) => {
@@ -86,22 +85,37 @@ export const gBim = () => el2('属性绑定（BIM）', [
   F('bim.strategy', 'select', '绑定策略', { opts: ['', 'ifc', 'fbx', 'gltf2', 'obj', '3ds', 'generic'], hint: '构件 ID / 元数据的按格式解析方式；留空 = 按输入文件扩展名自动选择，仅在识别不准时强制指定' }),
   F('bim.noSceneMeta', 'bool', '仅用外部属性表', { hint: '跳过场景内元数据（--bim-no-scene-meta）：属性完全来自 CSV' }),
   F('bim.noInherit', 'bool', '不继承父节点元数据', { hint: '子构件不再继承祖先节点上的元数据（--bim-no-inherit）' }),
+    F('bim.metadata', 'bool', '输出 BIM 元数据绑定', { hint: '与 --bim-bind 同族开关：把侧表元数据写入 b3dm Batch Table（启用后 Cesium 端 feature.properties 可见）' }),
   F('bim.report', 'bool', '输出绑定透明度报告', { hint: '逐构件的 ID 命中来源与匹配情况写入 out/<模型>/bim_report.json，在任务产物列表中可下载核对' }),
 ]);
 
 /** 每类型的「高级参数」组（渲染时拼在 BASIC 组之后） */
 export const UI = {
-  tiles: () => [gProj(), gOrigin(), gGeoref(), gSimplify(), gBim()],
+  tiles: () => ([
+    { name: '输出选项', fields: [
+      F('compressMeshopt', 'bool', 'Meshopt 几何压缩（体积约省 60%）', { hint: '输出 EXT_meshopt_compression 瓦片，需查看端 CesiumJS ≥ 1.96；MGOServer 自带 1.111 支持' }),
+      F('mergeSmallTiles', 'bool', '合并小瓦片（碎片化场景推荐）', { hint: '自动探测 min-block 并合并过小的 content 瓦片，减少 Cesium 端 tile 调度数量；不改几何' }),
+    ]},
+    gProj(), gOrigin(), gGeoref(), gSimplify(), gBim(),
+  ]),
   terrain: () => ([
     { name: '地形参数', fields: [
       F('maxLod', 'int', '最大层级 LOD', { ph: '留空=自动', min: 1, hint: '地形瓦片细分到第几级；越大越精细，输出量级成倍增加' }),
       F('samplesPerTile', 'int', '每瓦片采样数', { ph: '65', min: 2, max: 255, odd: true, hint: '每个地形瓦片的网格采样点数（须为奇数，如 33/65/129/257）' }),
       F('normals', 'bool', '导出顶点法线', { def: true, hint: '输出法线数据，地形光照更平滑（体积略增大）' }),
     ]},
-    gOrigin('坐标原点'), gProj(), gGeoref(),
+    gOrigin('坐标原点'), gProj(),
     gSimplify({ local: false, errPh: '留空=0.001' }),
   ]),
-  image: () => [gProj()],
+  image: () => ([
+    gProj(),
+    { name: '瓦片参数', fields: [
+      F('minZoom', 'int', '最小缩放层级', { min: 0, max: 24, ph: '留空=自动', hint: '金字塔最粗糙一级；0=全球单层' }),
+      F('maxZoom', 'int', '最大缩放层级', { min: 0, max: 24, ph: '留空=自动', hint: '金字塔最精细一级，决定输出分辨率' }),
+      F('nodata', 'vec3', '透明像素颜色 (r,g,b)', { subs: ['R', 'G', 'B'], hint: '与给定颜色一致的像素输出为透明（0-255 整数，如 0,0,0）' }),
+    ]},
+    gOrigin('原点覆盖（可选，TIF tiepoint）'),
+  ]),
   geojson: () => ([{ name: '转换参数（输出默认转经纬度）', fields: [
     F('sourceCrs', 'text', '源坐标系', { span: true, ph: 'EPSG:4547 / ENU:lat,lon / WKT / +proj=' , hint: '留空则读文件内 crs 成员，均无时按经纬度处理；目标坐标系固定为 EPSG:4326，无需设置' }),
     F('pretty', 'bool', '格式化输出 JSON', { hint: '缩进排版输出文件，便于阅读（体积略增大）' }),
