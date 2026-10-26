@@ -69,6 +69,18 @@ export class ProgressParser {
   snapshot() { return { ...this.last }; }
 }
 
+/**
+ * 多文件 tiles job：把「单文件 0..100」折算进本 job 的全局切片。
+ * done/total 必须与 percent 同尺度，否则 UI 出现 `97/97 (32%)` 这类自相矛盾
+ * 数字（用户实测）。原始单文件计数保留在 message（detail）里可追溯。
+ * 上限 98 把最后 2% 留给收尾（artifact 发现/校验），最终由 finish 置 100。
+ */
+export function scaleProgress(ev, scale) {
+  const percent = Math.min(98,
+    Math.floor(((scale.index + ev.percent / 100) / scale.files) * 98));
+  return { done: percent, total: 100, percent };
+}
+
 // 已知边界：ImageTiler 逐层重启计数（每个 level 0..100），跨层时 job.progress
 // 的 percent 会回落（L1 100% → L2 2%）。有意不钳制：clamp 成非递减会让进度条
 // 卡在 100% 直到跑完（更误导），而引擎只在结束时输出总层数，无法做跨层累加。

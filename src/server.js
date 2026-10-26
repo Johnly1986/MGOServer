@@ -55,6 +55,7 @@ export async function buildApp(cfg = loadConfig()) {
   const manager = new JobManager(cfg);
   await manager.init();
   const mgo = await probeMgo(cfg.binary);
+  manager.engineInfo = mgo;   // run.log 首行记录引擎版本（诊断/横幅排查）
   const cesiumLocal = fs.existsSync(cfg.cesiumLocalEntry);
 
   await app.register(multipart, {

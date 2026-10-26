@@ -274,7 +274,9 @@ export async function openLog(id) {
   if (stale()) return;                          // fetch 期间被 closeLog/重开：不再挂流
   es = new EventSource(`/api/v1/jobs/${id}/events`);
   es.addEventListener('log', (m) => {
-    const line = JSON.parse(m.data).line;
+    const d = JSON.parse(m.data);
+    if (d.replay) return;   // history already rendered from log?tail
+    const line = d.line;
     const cls = /\[(?:Progress|Done)\]/.test(line) ? 't-prog' : (/^Error|错误|warning/i.test(line) ? 't-err' : '');
     logSpan(cls, line); scroll();
   });

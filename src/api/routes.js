@@ -173,6 +173,7 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
         jobTimeoutS: cfg.jobTimeoutS,
         ttlDays: cfg.ttlDays,
       },
+      engine: { version: mgo.version, path: mgo.path },
       features: {
         osgb: mgo.hasOsgb,
         localPathInput: cfg.allowLocalPath || local,
@@ -764,7 +765,10 @@ export function registerApi(app, { manager, cfg, mgo, cesiumLocal }) {
     manager.on('event', onEvent);
     send({ seq: 0, ts: new Date().toISOString(), type: 'hello',
       status: job.status, progress: job.progress });
-    for (const e of job.events) if (e.seq > lastSeen) send(e);
+    // Replayed events are flagged: the console already rendered run.log history
+    // (log?tail=…), so re-emitting the same [Service]/module log lines made the
+    // "real-time" section repeat the whole history above it.
+    for (const e of job.events) if (e.seq > lastSeen) send({ ...e, replay: true });
   });
 }
 

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { runJob } from './runner.js';
 import { buildArgs, buildMergeArgs, resolveOutPath, tileStem } from './argv.js';
 import { discoverArtifacts, primaryArtifact } from './artifacts.js';
-import { ProgressParser, isModuleLine } from './progress.js';
+import { ProgressParser, isModuleLine, scaleProgress } from './progress.js';
 
 const EVENT_CAP = 300;       // per-job in-memory replay buffer (SSE)
 const TAIL_CAP = 30;         // stderr/log tail kept for error reporting
@@ -273,6 +273,14 @@ export class JobManager extends EventEmitter {
    *  spawn() runs, removed when the job reaches a terminal status. */
   async start(job) {
     try {
+      // 引擎版本落在 run.log 首行：启动横幅/进度这类现象先看这一行——旧引擎
+      // 没有 0.9.6 的横幅，一眼可辨「是引擎没升级」而不是显示缺陷。
+      const info = this.engineInfo;
+      if (info?.found) {
+        const line = `[Service] engine: MGO v${info.version}${info.path ? ` (${info.path})` : ''}`;
+        try { fs.appendFileSync(this.logPath(job.id), line + '\n'); } catch { /* best-effort */ }
+        this.emitEvent(job, { type: 'log', line, stream: 'stdout' });
+      }
       // inline control-points CSV → on-disk file the CLI expects (wins over upload)
       if (job.params?.georef?.controlPoints) {
         const cps = path.join(this.inputDir(job.id), '_controlpoints.csv');
@@ -450,13 +458,14 @@ export class JobManager extends EventEmitter {
     const ev = parser.parse(line);
     if (ev) {
       const prev = job.progress;
-      // multi-file tiles: scale the per-file 0..100 into this job's slice
-      let percent = ev.percent;
-      if (scale && scale.files > 1) {
-        percent = Math.min(98, Math.floor(((scale.index + ev.percent / 100) / scale.files) * 98));
-      }
+      // multi-file tiles: fold the per-file 0..100 into this job's global slice
+      // (done/total/percent share one scale — see scaleProgress)
+      const slice = (scale && scale.files > 1) ? scaleProgress(ev, scale) : null;
+      const percent = slice ? slice.percent : ev.percent;
       job.progress = {
-        done: ev.done, total: ev.total, percent,
+        done: slice ? slice.done : ev.done,
+        total: slice ? slice.total : ev.total,
+        percent,
         phase: ev.phase ?? prev.phase, source: 'cli-stdout', message: ev.detail ?? line,
       };
       if (ev.type === 'done' || percent !== prev.percent) {
