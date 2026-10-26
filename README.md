@@ -78,11 +78,71 @@ curl -F 'options={"type":"tiles","proj":{"crs":"EPSG:4526"}}' -F file=@tower.fbx
 |------|------|
 | 离线内网 | `MGO_ENGINE_BUNDLE=/path/to/mgo-engine-<plat>.tgz npm ci`（包由构建机 `npm run engine:pack` 产出，自包含 proj.db） |
 | 升级到最新 | `npm run engine:update -- --latest`：取 [MGO-CLI 最新 Release](https://github.com/Johnly1986/MGO-CLI/releases/latest) 的对应平台资产，用 release asset 自带 digest 校验；查询失败自动回退到固定版本。GitHub API 未认证限额 60 次/小时/IP，提额用 `GITHUB_TOKEN=xxx npm run engine:update -- --latest` |
-| 镜像加速 | `MGO_ENGINE_MIRROR=https://your-proxy/{url}`，或直接改 `package.json` 的 `mgoEngine.downloads` |
+| 镜像加速 | `package.json mgoEngine.downloads.*.mirrors` 已内置（`{url}` 模板，跨版本有效）；临时换/加用 `MGO_ENGINE_MIRROR=https://your-proxy/{url}` |
 | 自管引擎 | 设 `MGO_BINARY` 指向已有可执行文件，安装器不干预 |
 | 传统路线 | 将 [MGO-CLI Releases](https://github.com/Johnly1986/MGO-CLI/releases) 产物放入 `build/bin/{linux,windows}/`；Ubuntu 24.04 需 `sudo apt install libgdal34t64 libproj25 libtiff6 libopenscenegraph161 proj-data gdal-data` |
 
 全部环境变量见 [`.env.example`](.env.example)（安装器读的是进程环境变量，`.env` 只影响服务进程）；升级引擎用 `npm run engine:update`，或加 `-- --latest` 追新。
+
+</details>
+
+<details>
+<summary><b>安装 / 更新引擎报错？先看这里</b></summary>
+
+安装器（`postinstall` 与 `npm run engine:update`）只做四件事：**按预配置地址下载 → sha256 校验 →
+解压到 `build/bin/<platform>/` → probe 自检**。出现 `fetch failed` 说明本机到下载地址（GitHub
+Release 资产或镜像）不通，引擎本身没有问题——同一份资产在联网机器上 `sha256` 是能对上的。
+
+**1）先确认命令**。npm 的子命令必须带 `run`：
+
+```bash
+npm run engine:update              # 重新安装固定版本（= setup.mjs --force）
+npm run engine:update -- --latest  # 追 MGO-CLI 最新 Release（查询失败自动回退固定版本）
+```
+
+`npm engine:update` 会被 npm 当成未知命令（提示 `Did you mean … npm run engine:update`），
+不会执行任何安装动作。
+
+**2）下载失败**（`fetch failed` / 连接重置 / 超时）。按成本从低到高：
+
+- **镜像兜底（推荐，先重跑）**：`package.json` 的 `mgoEngine.downloads.*.mirrors` 已内置国内可达的
+  GitHub 加速镜像，直连失败会自动改用镜像重试，无需任何配置。也可自己指定（`{url}` 会替换成真实下载地址）：
+
+  ```powershell
+  # Windows PowerShell
+  $env:MGO_ENGINE_MIRROR="https://ghproxy.net/{url}"; npm run engine:update
+  ```
+
+  ```bash
+  # Linux / macOS
+  MGO_ENGINE_MIRROR='https://ghproxy.net/{url}' npm run engine:update
+  ```
+
+- **离线包（镜像也不通时最可靠）**：在任意能上外网的机器/浏览器下载对应平台的 Release 资产，
+  拷到目标机后用 `MGO_ENGINE_BUNDLE` 指过去（离线包优先于任何网络地址）：
+
+  ```powershell
+  $env:MGO_ENGINE_BUNDLE="D:\downloads\MGO-0.9.5-win-x64.zip"; npm run engine:update
+  ```
+
+  ```bash
+  MGO_ENGINE_BUNDLE=/data/MGO-0.9.5-linux-x64.tar.gz npm ci
+  ```
+
+  资产地址与 sha256 见 `package.json`（当前 win-x64 `41ceb3af…472e`、linux-x64 `c1b85dca…3f4a`），
+  下载后可用 `certutil -hashfile … SHA256` / `sha256sum` 核对。
+
+- **代理**：Node 内置 `fetch` 默认**不读** `HTTPS_PROXY`，需显式开启（Node ≥ 22.21）：
+  `$env:NODE_USE_ENV_PROXY=1; npm run engine:update`，或 `node --use-env-proxy scripts/setup.mjs --force`。
+  公司网络做 HTTPS 中间人时，把根证书指给 Node：`$env:NODE_EXTRA_CA_CERTS="D:\corp-root.pem"`。
+
+失败信息现在会打印**真实原因**（`ENOTFOUND` / `ECONNRESET` / 证书错误…）并给出对应修法；
+装好后跑 `npm run doctor` 复检。
+
+**3）下载成功但 probe FAILED**。Windows 包自带引擎自身的 DLL，但 **不带 MSVC 运行库**
+（`VCRUNTIME140.dll` / `VCRUNTIME140_1.dll` / `MSVCP140.dll` 由系统提供）。若目标机没装过
+VC++ 2015-2022 运行库，装一下 [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+后重跑 `npm run doctor`。Linux 侧对应的是 glibc 基线（低于构建基线请换发行版或用 Docker）。
 
 </details>
 

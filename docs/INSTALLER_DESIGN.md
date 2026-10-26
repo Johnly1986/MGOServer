@@ -98,7 +98,7 @@ export function engineEnv(binaryDir) {
 2. `build/bin/<plat>/` 已有引擎且 `manifest.json` 版本 ≥ 期望 → 跳过（**现状 clone 即用路径，老用户零感知**）；
 3. `MGO_ENGINE_BUNDLE=/path/to.tgz` → 离线安装（内网/无外网）；
 4. `MGO_ENGINE_MIRROR` 镜像 URL（国内兜底）；
-5. GitHub Release：`https://github.com/Johnly1986/MGO-CLI/releases/download/v<mgoEngine.version>/MGO-<version>-<plat>-<arch>.{tar.gz,zip}`（url/sha256 由 `package.json mgoEngine.downloads` 固定）；
+5. GitHub Release：`https://github.com/Johnly1986/MGO-CLI/releases/download/v<mgoEngine.version>/MGO-<version>-<plat>-<arch>.{tar.gz,zip}`（url/sha256 由 `package.json mgoEngine.downloads` 固定）；同一条目的 `mirrors`（支持 `{url}` 占位符，一份模板列表跨版本有效）在主地址失败后依次重试。镜像字节仍按 pinned sha256 校验——镜像最多让安装失败，无法篡改内容；
 6. **可选追新** `npm run engine:update -- --latest`：先查 `GET /repos/<mgoEngine.releaseRepo>/releases/latest`，命中本平台资产就用它的 URL + asset digest 的 sha256 **取代**第 5 步（因此不牺牲完整性校验）；查询失败（离线 / 403 限流 / 该平台无资产）只告警并回退第 5 步。`npm ci` / postinstall 不带该开关，装机结果始终由固定版本决定。
 
 下载后：sha256 校验 → 解压到 `build/bin/<plat>/` → `probeMgo()` 实测 → 打印结果表（引擎版本 / hasOsgb / hasBim / proj.db 就位 / 缺失项）。
@@ -228,3 +228,33 @@ patchelf + 系统 GIS 库，保持手动验证（本机已验证：129 文件零
 
 上游遗留（不阻塞）：资产未含 `libstdc++.so.6`/`libgcc_s.so.1`（发行版皆有，chroot 补齐后全通）、
 无 GDAL 数据目录（实测地形/坐标链路不需要）。
+
+## 14. 下载失败可诊断化 + 镜像兜底（2026-10-26）
+
+用户报障：Windows 上 `npm engine:update`（命令写错，npm 提示 `npm run engine:update`）后
+`node scripts/setup.mjs` 报 `fetch failed`，安装器只输出这一句，无法判断是 DNS、连接重置、
+TLS 中间人还是代理未生效。核验结论：v0.9.5 资产与 `package.json` 的 sha256 一致
+（win-x64 `41ceb3af…472e` / 27.0 MB，linux-x64 `c1b85dca…3f4a` / 93.4 MB），GitHub API digest 也一致——
+**不是资产或安装器逻辑问题，是本机到下载地址的网络问题**。
+
+两处改动：
+
+1. **失败诊断**（`scripts/setup.mjs`）：新增 `describeFetchError()`，把 Node 裸露的
+   `fetch failed` 还原成 `fetch failed (ENOTFOUND host=github.com)` 这类可执行信息（沿 `cause`
+   链最多 5 层，含 happy-eyeballs 的 AggregateError）；新增 `downloadFailureHints()`，按错误特征给出
+   定制修法：`HTTPS_PROXY` 已设但 Node 未走代理 → 提示 `NODE_USE_ENV_PROXY=1`（Node ≥ 22.21）或
+   `--use-env-proxy`；证书类错误 → 提示 `NODE_EXTRA_CA_CERTS`（Node ≥ 22.15 可用 `--use-system-ca`）；
+   总失败时列出离线包 / 自定义地址 / 镜像三条恢复路径。
+2. **镜像兜底**：`mgoEngine.downloads.*.mirrors` 改为 `{url}` 模板列表
+   （`ghproxy.net` / `gh-proxy.com` / `ghfast.top`），`candidateUrls()` 用主地址展开后按序重试；
+   由于仍校验 pinned sha256，镜像不引入信任降级。发布新 tag 时**不再需要改 mirrors**。
+   三个镜像实测（2026-10-26，新加坡出口）与官方资产字节一致、sha256 相同；内地可达性随网络环境变化，
+   模板列表可随时替换，也可用 `MGO_ENGINE_MIRROR` 覆盖。
+
+测试：`test/setup.test.js` 新增镜像模板展开、`describeFetchError` 分支、代理/TLS 提示、镜像兜底
+真实下载（主地址拒连 → 模板镜像命中并 sha256 校验通过）、`package.json` 镜像模板健全性共 5 例。
+
+Windows 侧顺带确认：win 包自带引擎自身 DLL，但 `MGOConsole.exe` 从 System32 导入
+`VCRUNTIME140.dll` / `VCRUNTIME140_1.dll` / `MSVCP140.dll`（包内不含）。干净机器缺 VC++ 2015-2022
+运行库时 probe 会失败，因此 `setup.mjs` 的 probe 失败提示在 win32 上直接给 vc_redist 地址，
+`doctor.mjs` 新增 `msvc runtime` 一行检查这三份 DLL。

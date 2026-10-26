@@ -19,6 +19,10 @@ import { loadEngineManifest, resolveDownloadEntry, platformKey, binaryName, comp
 
 const execFileP = promisify(execFile);
 
+// Imported by (and resolved from) the Windows engine binary; missing on a clean
+// machine without the VC++ 2015-2022 redistributable.
+const MSVC_RUNTIME_DLLS = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll'];
+
 const ROWS = [];
 const pass = (label, detail) => ROWS.push(['PASS', label, detail]);
 const fail = (label, detail) => ROWS.push(['FAIL', label, detail]);
@@ -97,6 +101,17 @@ async function main() {
     }
     if (missing.size === 0) pass('lib closure', `${files.length} ELF files, no unresolved dependencies`);
     else fail('lib closure', `missing: ${[...missing.keys()].join(', ')} — reinstall the engine bundle (npm run engine:update) or run under Docker`);
+  }
+
+  // 3b ── Windows: the bundle ships the engine's own DLLs but NOT the MSVC/C
+  // runtime (MGOConsole.exe imports VCRUNTIME140(_1).dll / MSVCP140.dll from
+  // System32).  A clean machine without vc_redist fails the probe with only a
+  // cryptic spawn error, so name the fix here.
+  if (process.platform === 'win32' && exists) {
+    const sysRoot = process.env.SystemRoot || 'C:\\Windows';
+    const missing = MSVC_RUNTIME_DLLS.filter((n) => !fs.existsSync(path.join(sysRoot, 'System32', n)));
+    if (missing.length === 0) pass('msvc runtime', 'VC++ 2015-2022 runtime present (bundle does not ship it)');
+    else fail('msvc runtime', `missing ${missing.join(', ')} in System32 — install https://aka.ms/vs/17/release/vc_redist.x64.exe then re-run doctor`);
   }
 
   // 4 ── projection data: bundle/release layouts first, system fallback, else break

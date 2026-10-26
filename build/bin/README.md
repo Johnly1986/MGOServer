@@ -20,7 +20,10 @@ npm run doctor         # 体检：引擎/动态库闭包/proj.db/glibc 基线
 
 - **离线内网**：`MGO_ENGINE_BUNDLE=/path/to/bundle.tgz npm ci`（先在联网机
   `npm run engine:pack` 产出，或直接下载 Release 资产）。
-- **镜像加速**：`MGO_ENGINE_URL` / `MGO_ENGINE_MIRROR`，见 `.env.example`。
+- **镜像加速**：`package.json` 已内置镜像兜底（`mirrors` 里的 `{url}` 模板），直连失败自动重试；
+  也可临时指定 `MGO_ENGINE_URL` / `MGO_ENGINE_MIRROR`，见 `.env.example`。
+- **下载失败**：`fetch failed` 是网络问题（不是引擎问题）；Windows 上先确认用的是
+  `npm run engine:update`（必须带 `run`），再按 README「安装/更新引擎报错？先看这里」处理。
 
 ## 引擎包布局（平铺在平台目录下）
 

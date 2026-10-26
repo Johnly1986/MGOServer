@@ -8,7 +8,7 @@ import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { setup, compareVersions, applyMirror, candidateUrls, loadEngineManifest, resolveDownloadEntry, platformKey, platformKeyFor, sha256File, expectedSha256, normalizeDigest, pickReleaseAsset, fetchLatestAsset } from '../scripts/setup.mjs';
+import { setup, compareVersions, applyMirror, candidateUrls, loadEngineManifest, resolveDownloadEntry, platformKey, platformKeyFor, sha256File, expectedSha256, normalizeDigest, pickReleaseAsset, fetchLatestAsset, describeFetchError, proxyEnv, envProxyActive, downloadFailureHints } from '../scripts/setup.mjs';
 import { parseLdd } from '../scripts/pack-engine.mjs';
 import { runJob } from '../src/jobs/runner.js';
 import { engineEnv, withEngineEnv } from '../src/engine-env.js';
@@ -42,6 +42,61 @@ test('candidateUrls: manifest url + mirrors, env override wins, mirror appends a
     ['https://a/x.tgz', 'https://m/https://a/x.tgz'],
   );
   assert.deepEqual(candidateUrls({}), []);
+  // opt-out: an internal MGO_ENGINE_URL must not leak its path to public mirrors
+  assert.deepEqual(candidateUrls(entry, { urlEnv: 'https://c/x.tgz', useMirrors: false }), ['https://c/x.tgz']);
+});
+
+test('candidateUrls: a mirrors[] entry with {url} is a version-independent template', () => {
+  // package.json ships these templates so a new engine tag never needs the
+  // mirror list hand-edited; a full URL in mirrors[] still passes through as-is
+  const entry = {
+    url: 'https://github.com/o/r/releases/download/v9.9.9/MGO-9.9.9-win-x64.zip',
+    mirrors: ['https://ghproxy.net/{url}', 'https://plain.example/mgo.zip'],
+  };
+  assert.deepEqual(candidateUrls(entry), [
+    'https://github.com/o/r/releases/download/v9.9.9/MGO-9.9.9-win-x64.zip',
+    'https://ghproxy.net/https://github.com/o/r/releases/download/v9.9.9/MGO-9.9.9-win-x64.zip',
+    'https://plain.example/mgo.zip',
+  ]);
+  // --latest re-points entry.url at the newest tag → the same templates follow it
+  assert.equal(
+    candidateUrls({ ...entry, url: 'https://github.com/o/r/releases/download/v9.9.10/MGO-9.9.10-linux-x64.tar.gz' })[1],
+    'https://ghproxy.net/https://github.com/o/r/releases/download/v9.9.10/MGO-9.9.10-linux-x64.tar.gz',
+  );
+});
+
+test('describeFetchError: the bare "fetch failed" keeps its cause code and host', () => {
+  const e = new Error('fetch failed');
+  e.cause = Object.assign(new Error('getaddrinfo ENOTFOUND github.com'), { code: 'ENOTFOUND', hostname: 'github.com' });
+  const text = describeFetchError(e);
+  assert.match(text, /^fetch failed/);
+  assert.match(text, /ENOTFOUND/);
+  assert.match(text, /host=github\.com/);
+  // nested cause (undici wraps socket errors) is still found
+  const nested = new Error('fetch failed');
+  nested.cause = Object.assign(new Error('other'), { cause: Object.assign(new Error('boom'), { code: 'ECONNRESET' }) });
+  assert.match(describeFetchError(nested), /ECONNRESET/);
+  // no cause → plain message, never "undefined"
+  assert.equal(describeFetchError(new Error('HTTP 404 for https://x')), 'HTTP 404 for https://x');
+  assert.equal(describeFetchError(undefined), 'unknown error');
+});
+
+test('downloadFailureHints: proxy variables get an actionable hint once they are actually honoured', () => {
+  const env = { HTTPS_PROXY: 'http://127.0.0.1:7890' };
+  const hints = downloadFailureHints(['https://x: fetch failed (ECONNREFUSED)'], env, []);
+  assert.equal(hints.length, 1);
+  assert.match(hints[0], /NODE_USE_ENV_PROXY=1/);
+  assert.match(hints[0], /--use-env-proxy/);
+  // already active (env var or CLI flag) → no stale hint
+  assert.deepEqual(downloadFailureHints(['x'], { ...env, NODE_USE_ENV_PROXY: '1' }, []), []);
+  // proxyEnv picks the first populated variable, case-insensitively
+  assert.deepEqual(proxyEnv({ https_proxy: 'http://p:1' }), { key: 'https_proxy', value: 'http://p:1' });
+  assert.equal(proxyEnv({}), null);
+  assert.equal(envProxyActive({ NODE_USE_ENV_PROXY: 'true' }), true);
+  assert.equal(envProxyActive({}, ['--use-env-proxy']), true);
+  assert.equal(envProxyActive({}, []), false);
+  // TLS rejection → certificate hint (corporate HTTPS inspection)
+  assert.match(downloadFailureHints(['x: fetch failed (UNABLE_TO_VERIFY_LEAF_SIGNATURE)'], {}, [])[0], /NODE_EXTRA_CA_CERTS/);
 });
 
 test('loadEngineManifest reads mgoEngine from package.json', () => {
@@ -49,6 +104,18 @@ test('loadEngineManifest reads mgoEngine from package.json', () => {
   // canonical keys are "linux-*"/"win-*" (see resolveDownloadEntry) — the
   // package.json manifest authors "win-x64", never "win32-x64"
   assert.ok(m && m.version && m.downloads['linux-x64'] && m.downloads['win-x64']);
+});
+
+test('loadEngineManifest: shipped mirrors are absolute and every template expands', () => {
+  const m = loadEngineManifest();
+  for (const [key, entry] of Object.entries(m.downloads)) {
+    const urls = candidateUrls(entry);
+    assert.ok(urls.length > 1, `${key}: pre-configured mirror fallbacks expected`);
+    for (const u of urls) {
+      assert.match(u, /^https:\/\//, `${key}: not an absolute https URL: ${u}`);
+      assert.doesNotMatch(u, /\{url\}/, `${key}: unexpanded template leaked into candidates: ${u}`);
+    }
+  }
 });
 
 test('platformKeyFor: win32 hosts normalize to the "win-*" manifest keys (Windows regression)', () => {
@@ -334,12 +401,66 @@ t('setup: download failure from the manifest URL fails closed, dest untouched', 
       downloads: { [`${process.platform}-${process.arch}`]: { url: `http://127.0.0.1:${deadPort}/mgo.tgz`, sha256: '' } },
     },
   }));
+  const errs = [];
+  const orig = console.error;
+  console.error = (...a) => errs.push(a.join(' '));
   const prev = process.exitCode;
-  const res = await setup(['--dest', path.join(root, 'bin-fail')], {}, pkg);
-  assert.equal(process.exitCode, 1);
-  assert.equal(res.installed, undefined);
-  assert.equal(fs.existsSync(path.join(root, 'bin-fail')), false, 'dest must not be created on failed download');
-  process.exitCode = prev;
+  try {
+    const res = await setup(['--dest', path.join(root, 'bin-fail')], { HTTPS_PROXY: 'http://127.0.0.1:7890' }, pkg);
+    assert.equal(process.exitCode, 1);
+    assert.equal(res.installed, undefined);
+    assert.equal(fs.existsSync(path.join(root, 'bin-fail')), false, 'dest must not be created on failed download');
+    const text = errs.join('\n');
+    // the actionable cause must survive into the output, not just "fetch failed"
+    assert.match(text, /ECONNREFUSED/, `failure must name the socket error: ${text}`);
+    assert.match(text, /fix \(pick one\)/, 'failure must offer the recovery paths');
+    assert.match(text, /NODE_USE_ENV_PROXY=1/, 'an advertised-but-unused proxy must be called out');
+  } finally {
+    console.error = orig;
+    process.exitCode = prev;
+  }
+});
+
+t('setup: primary address down → mirrors[] (with {url} template) installs and verifies', async () => {
+  const engineDir = path.join(root, 'fakeeng-mirror');
+  await makeFakeEngine(engineDir, '9.9.9-mirror');
+  const bundle = await tarBundle(engineDir, path.join(root, 'srv', 'mirror.tgz'));
+  const hash = await sha256File(bundle);
+  const hits = [];
+  const srv = http.createServer((req, res) => {
+    hits.push(req.url);
+    if (req.url.startsWith('/proxy/')) { res.writeHead(200); return fs.createReadStream(bundle).pipe(res); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const dead = http.createServer(() => {});
+  await new Promise((r) => dead.listen(0, '127.0.0.1', r));
+  const deadPort = dead.address().port;
+  await new Promise((r) => dead.close(r));
+  const pkg = path.join(root, 'pkg-mirror');
+  await fsp.mkdir(pkg, { recursive: true });
+  await fsp.writeFile(path.join(pkg, 'package.json'), JSON.stringify({
+    mgoEngine: {
+      version: '9.9.9-mirror',
+      downloads: {
+        [platformKey]: {
+          url: `http://127.0.0.1:${deadPort}/MGO-9.9.9-mirror-${platformKey}.tar.gz`,
+          mirrors: [`${base}/proxy/{url}`],
+          sha256: hash,
+        },
+      },
+    },
+  }));
+  try {
+    const res = await setup(['--dest', path.join(root, 'bin-mirror')], {}, pkg);
+    assert.equal(res.installed, true, 'mirror fallback must produce a working engine');
+    assert.equal(res.version, '9.9.9-mirror');
+    assert.equal(hits.length, 1, 'only the mirror should be reached once the primary is refused');
+    assert.match(hits[0], /^\/proxy\/http:/, 'the {url} template must expand to the primary address');
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
 });
 
 t('setup: sha256 sidecar (<url>.sha256) is used when the manifest pin is empty', async () => {

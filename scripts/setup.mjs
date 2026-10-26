@@ -17,7 +17,14 @@
  *   4. MGO_ENGINE_URL=<url>         → explicit pre-configured download address
  *   5. package.json mgoEngine.downloads["<platform>-<arch>"] → url + mirrors,
  *      each optionally rewritten by MGO_ENGINE_MIRROR (a '{url}' template or
- *      a plain base prefix — for regions where the default host is slow)
+ *      a plain base prefix — for regions where the default host is slow).
+ *      A mirrors[] entry may itself be a '{url}' template, so one
+ *      version-independent list (`https://ghproxy.net/{url}`, …) covers every
+ *      future release instead of pinning a full URL per version; mirrors are
+ *      tried only after the primary address, and the pinned sha256 still
+ *      verifies their bytes.  A total download failure prints the real cause
+ *      (Node's bare "fetch failed" hides ENOTFOUND/ECONNRESET/TLS) plus the
+ *      proxy / certificate hint that matches it.
  *      (process.platform is normalized first: win32 hosts resolve the "win-*"
  *      keys, matching the release asset names; legacy "win32-*" keys still hit)
  *
@@ -125,12 +132,89 @@ export function applyMirror(mirror, url) {
     : `${mirror.replace(/\/+$/, '')}/${url}`;
 }
 
-/** Candidate download URLs for a manifest entry, in attempt order. */
-export function candidateUrls(entry, { urlEnv, mirrorEnv } = {}) {
+/** Candidate download URLs for a manifest entry, in attempt order.
+ *  mirrors[] entries may be full URLs (used verbatim) or '{url}' templates
+ *  (expanded against the primary URL) — the template form is what lets
+ *  package.json carry one mirror list across engine versions.
+ *  useMirrors:false skips the manifest mirrors entirely (MGO_ENGINE_NO_MIRRORS=1) —
+ *  for operators who must not contact third-party mirrors (e.g. an internal
+ *  MGO_ENGINE_URL whose path must not leak to a public proxy). */
+export function candidateUrls(entry, { urlEnv, mirrorEnv, useMirrors = true } = {}) {
   const base = urlEnv || entry?.url;
   if (!base) return [];
-  const list = [base, ...(entry?.mirrors ?? [])];
+  const mirrors = useMirrors
+    ? (entry?.mirrors ?? []).map((m) => (String(m).includes('{url}') ? applyMirror(m, base) : m))
+    : [];
+  const list = [base, ...mirrors];
   return mirrorEnv ? [...list, ...list.map((u) => applyMirror(mirrorEnv, u))] : list;
+}
+
+// ── failure diagnostics ──────────────────────────────────────────────────────
+// Node's fetch rejects with a bare "fetch failed"; the actionable information
+// (ENOTFOUND / ECONNRESET / certificate error) lives in err.cause.  An
+// installer whose only output is "fetch failed" cannot be debugged from a
+// screenshot, so every failed attempt is rendered through this helper.
+function causeChain(e) {
+  const out = [];
+  let cur = e;
+  for (let depth = 0; cur && depth < 5; depth += 1) {
+    out.push(cur);
+    // happy-eyeballs style aggregate causes keep their failures in .errors
+    if (Array.isArray(cur.errors)) out.push(...cur.errors.slice(0, 4));
+    cur = cur.cause;
+  }
+  return out;
+}
+
+/** "fetch failed (ENOTFOUND host=github.com)" — never throws. */
+export function describeFetchError(e) {
+  if (!e) return 'unknown error';
+  const facts = [];
+  for (const c of causeChain(e)) {
+    // errno is the fallback for sockets that carry no symbolic code
+    const code = c?.code ?? c?.errno;
+    if (code !== undefined && code !== null && !facts.includes(String(code))) facts.push(String(code));
+    const host = c?.hostname || c?.host;
+    const hostFact = host ? `host=${host}` : null;
+    if (hostFact && !facts.includes(hostFact)) facts.push(hostFact);
+  }
+  const message = e?.message ?? String(e);
+  return facts.length ? `${message} (${facts.join(' ')})` : message;
+}
+
+const TLS_HINT = /CERT|SSL|TLS|SELF_SIGNED|UNABLE_TO_VERIFY|EPROTO|altnames/i;
+const PROXY_ENV_KEYS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
+
+/** The proxy the environment advertises, or null ({key, value}). */
+export function proxyEnv(env = process.env) {
+  for (const key of PROXY_ENV_KEYS) {
+    const value = String(env?.[key] ?? '').trim();
+    if (value) return { key, value };
+  }
+  return null;
+}
+
+/** Whether this Node process was actually told to send fetch through that proxy. */
+export function envProxyActive(env = process.env, execArgv = process.execArgv) {
+  if (/^(1|true|yes)$/i.test(String(env?.NODE_USE_ENV_PROXY ?? ''))) return true;
+  return [...(execArgv ?? [])].some((a) => a === '--use-env-proxy' || a.startsWith('--use-env-proxy='));
+}
+
+/** Hints for a total download failure, most specific first (may be empty). */
+export function downloadFailureHints(errors = [], env = process.env, execArgv = process.execArgv) {
+  const text = errors.join('\n');
+  const hints = [];
+  const proxy = proxyEnv(env);
+  if (proxy && !envProxyActive(env, execArgv)) {
+    hints.push(`the environment advertises ${proxy.key}=${proxy.value}, but Node's built-in fetch ignores`
+      + ' proxy variables by default — re-run with NODE_USE_ENV_PROXY=1 (Node >= 22.21) or'
+      + ' `node --use-env-proxy scripts/setup.mjs --force`');
+  }
+  if (TLS_HINT.test(text)) {
+    hints.push('TLS certificate rejection (corporate proxy / antivirus HTTPS inspection?): point'
+      + ' NODE_EXTRA_CA_CERTS at the root CA .pem, or on Node >= 22.15 run with --use-system-ca');
+  }
+  return hints;
 }
 
 // ── latest-release resolution (opt-in `--latest`) ────────────────────────────
@@ -192,7 +276,8 @@ export async function fetchLatestAsset(repo, key, { apiBase = GH_API_BASE, token
     if (!asset) return { ok: false, error: `release ${release?.tag_name ?? '?'} has no asset matching ${key}` };
     return { ok: true, tag: release.tag_name ?? null, ...asset };
   } catch (e) {
-    return { ok: false, error: e?.name === 'TimeoutError' ? `timed out after ${timeoutMs}ms` : (e?.message ?? String(e)) };
+    if (e?.name === 'TimeoutError') return { ok: false, error: `timed out after ${timeoutMs}ms` };
+    return { ok: false, error: describeFetchError(e) };
   }
 }
 
@@ -385,7 +470,9 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
       return { skipped: 'unsupported-platform' }; // npm ci must survive on e.g. macOS dev boxes
     }
     const candidates = candidateUrls(entry, {
-      urlEnv: env.MGO_ENGINE_URL, mirrorEnv: env.MGO_ENGINE_MIRROR,
+      urlEnv: env.MGO_ENGINE_URL,
+      mirrorEnv: env.MGO_ENGINE_MIRROR,
+      useMirrors: env.MGO_ENGINE_NO_MIRRORS !== '1',
     });
     const timeoutMs = Number(env.MGO_ENGINE_TIMEOUT_MS || 1_800_000);
     tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mgo-engine-'));
@@ -399,12 +486,17 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
         sourceDesc = `download ${url}`;
         downloadedFrom = url;
         break;
-      } catch (e) { errors.push(`${url}: ${e.message}`); }
+      } catch (e) { errors.push(`${url}: ${describeFetchError(e)}`); }
     }
     if (!bundleFile) {
       warn('engine download failed from every pre-configured address:');
       for (const e of errors) warn(`  • ${e}`);
-      warn('fix: MGO_ENGINE_BUNDLE=<local bundle> · MGO_ENGINE_URL=<address> · MGO_ENGINE_MIRROR=<mirror>');
+      for (const hint of downloadFailureHints(errors, env)) warn(`  • ${hint}`);
+      const mirrorTpl = (pinnedEntry?.mirrors ?? []).find((m) => String(m).includes('{url}'));
+      warn('fix (pick one):');
+      warn('  • offline      MGO_ENGINE_BUNDLE=<local .zip/.tgz> then npm run engine:update');
+      warn('  • own address  MGO_ENGINE_URL=<bundle address>');
+      warn(`  • mirror       MGO_ENGINE_MIRROR="${mirrorTpl || 'https://your-mirror/{url}'}"`);
       return process.exitCode = 1;
     }
   }
@@ -448,7 +540,12 @@ export async function setup(argv = process.argv.slice(2), env = process.env, pkg
   const info = await report(binary, dest);
   if (!info.found) {
     warn('engine installed but not runnable — see `npm run doctor`');
-    warn('(usual cause: glibc older than the bundle baseline, or a Windows CRT mismatch)');
+    warn(process.platform === 'win32'
+      // the Windows bundle ships the engine's own DLLs but NOT the MSVC runtime
+      // (VCRUNTIME140.dll / MSVCP140.dll are imported from System32)
+      ? '(usual cause on Windows: the MSVC 2015-2022 runtime is missing — install'
+        + ' https://aka.ms/vs/17/release/vc_redist.x64.exe, then re-run `npm run doctor`)'
+      : '(usual cause: glibc older than the bundle baseline)');
     return process.exitCode = 1;
   }
   if (expectReports && info.version && compareVersions(info.version, expectReports) < 0) {
