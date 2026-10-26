@@ -33,9 +33,10 @@ MGOServer 是 MGO（C++17 三维切片引擎）的 Node.js HTTP 服务封装；�
 
 ## ✨ 核心特性
 
-- 🔗 **BIM 属性绑定** — IFC GUID / FBX·glTF 元数据 / 外部属性表 CSV 写入每个 b3dm 的 Batch Table；查看器点击构件即高亮并查看属性（可复制 JSON），可选输出绑定报告 `bim_report.json`。
-- 🗺️ **完整坐标投影** — EPSG / WKT / +proj / .prj / 七参数 Helmert / 单锚点 / 多控制点配准。
-- 🖥️ **双平台易部署** — Windows / Linux；自带 systemd unit，第三方前端经 REST API 即可接入。
+- **BIM 属性绑定** — IFC GUID / FBX·glTF 元数据 / 外部属性表 CSV 写入每个 b3dm 的 Batch Table；查看器点击构件即高亮并查看属性（可复制 JSON），可选输出绑定报告 `bim_report.json`。
+- **完整坐标投影** — EPSG / WKT / +proj / .prj / 七参数 Helmert / 单锚点 / 多控制点配准。
+- **模型轻量化** — 模型 / 地形 / 切斜摄影 轻量化。
+- **双平台易部署** — Windows / Linux；自带 systemd unit，第三方前端经 REST API 即可接入。
 
 ## 🚀 快速开始
 
